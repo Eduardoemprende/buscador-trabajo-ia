@@ -47,7 +47,9 @@ if st.button("Probar conexiones"):
                     conteo = f"RSS parse error — {r.content[:80]}"
             elif "chiletrabajos" in url:
                 items = soup.select("div.job-item, article, .oferta, [class*='job'], [class*='oferta']")
-                conteo = f"{len(items)} items | Selectores: " + ", ".join(set(i.name for i in items[:5]))
+                conteo = f"{len(items)} items | Tags: " + ", ".join(set(i.name for i in items[:5]))
+                if items:
+                    st.code(str(items[0])[:800], language="html")
             elif "indeed" in url:
                 items = soup.select("div.job_seen_beacon, .jobsearch-ResultsList li, [class*='job_']")
                 conteo = f"{len(items)} ofertas"
