@@ -23,13 +23,12 @@ st.caption("Esto muestra qué portales son accesibles desde Streamlit Cloud")
 
 if st.button("Probar conexiones"):
     pruebas = [
-        ("Get on Board RSS", "https://www.getonbrd.com/empleos/marketing-y-comunicacion.rss"),
-        ("Get on Board (categoría)", "https://www.getonbrd.com/empleos/marketing-y-comunicacion"),
-        ("Get on Board (búsqueda)", "https://www.getonbrd.com/empleos?query=marketing"),
-        ("Computrabajo", "https://www.computrabajo.cl/ofertas-de-trabajo/oferta-de-trabajo-de-marketing"),
         ("Chiletrabajos", "https://www.chiletrabajos.cl/encuentra-un-empleo?keyword=marketing"),
-        ("Trabajando.cl", "https://www.trabajando.cl/buscar-trabajo?q=marketing"),
-        ("Adzuna ES", "https://api.adzuna.com/v1/api/jobs/es/search/1?app_id=2ff10c7c&app_key=8fc13fca21fbed10e9cf5ba89fd4bb03&what=marketing&results_per_page=3"),
+        ("Indeed Chile", "https://cl.indeed.com/jobs?q=marketing&l=Santiago"),
+        ("Bumeran Chile", "https://www.bumeran.cl/empleos-busqueda-marketing.html"),
+        ("Computrabajo", "https://www.computrabajo.cl/ofertas-de-trabajo/oferta-de-trabajo-de-marketing"),
+        ("Trabajando.cl (búsqueda)", "https://www.trabajando.cl/buscar-trabajo?q=marketing"),
+        ("Get on Board RSS", "https://www.getonbrd.com/empleos/marketing-y-comunicacion.rss"),
     ]
 
     for nombre, url in pruebas:
@@ -45,24 +44,26 @@ if st.button("Probar conexiones"):
                     items = root.findall(".//item")
                     conteo = f"{len(items)} ofertas en RSS"
                 except:
-                    conteo = f"RSS parse error — {r.text[:100]}"
+                    conteo = f"RSS parse error — {r.content[:80]}"
+            elif "chiletrabajos" in url:
+                items = soup.select("div.job-item, article, .oferta, [class*='job'], [class*='oferta']")
+                conteo = f"{len(items)} items | Selectores: " + ", ".join(set(i.name for i in items[:5]))
+            elif "indeed" in url:
+                items = soup.select("div.job_seen_beacon, .jobsearch-ResultsList li, [class*='job_']")
+                conteo = f"{len(items)} ofertas"
+            elif "bumeran" in url:
+                items = soup.select("article, .aviso, [class*='aviso'], [class*='job']")
+                conteo = f"{len(items)} ofertas"
+            elif "computrabajo" in url:
+                items = soup.select("article.box_offer, article")
+                conteo = f"{len(items)} artículos"
+            elif "trabajando" in url:
+                items = soup.select("article, .job-item, .aviso, [class*='job']")
+                conteo = f"{len(items)} items"
             elif "getonbrd" in url:
                 items = soup.select('a[href*="/empleos/"][href*="-"]')
                 items = [a for a in items if a.get("href","").count("/") >= 3]
                 conteo = f"{len(items)} links de ofertas"
-            elif "computrabajo" in url:
-                items = soup.select("article.box_offer, article")
-                conteo = f"{len(items)} artículos"
-            elif "chiletrabajos" in url:
-                items = soup.select("div.job-item, article, .oferta")
-                conteo = f"{len(items)} items"
-            elif "trabajando" in url:
-                items = soup.select("article, .job-item, .aviso")
-                conteo = f"{len(items)} items"
-            elif "adzuna" in url:
-                import json
-                data = r.json()
-                conteo = f"{len(data.get('results',[]))} ofertas"
             else:
                 conteo = f"{len(r.text)} chars"
 

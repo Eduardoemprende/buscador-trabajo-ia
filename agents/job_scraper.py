@@ -16,8 +16,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 dotenv_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
-ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
-ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -128,47 +126,6 @@ def buscar_getonbrd(cargo: str, modalidad: str = None) -> list[dict]:
     return ofertas[:20]
 
 
-# ─────────────────────────────────────────
-# ADZUNA (API oficial — CL, AR, ES, GB, US)
-# ─────────────────────────────────────────
-
-def buscar_adzuna(cargo: str, modalidad: str = None) -> list[dict]:
-    ofertas = []
-    paises = ["es", "gb", "us"]  # CL y AR no tienen cobertura en Adzuna
-
-    for pais in paises:
-        url = f"https://api.adzuna.com/v1/api/jobs/{pais}/search/1"
-        params = {
-            "app_id": ADZUNA_APP_ID,
-            "app_key": ADZUNA_APP_KEY,
-            "what": cargo,
-            "results_per_page": 10,
-        }
-        try:
-            resp = requests.get(url, params=params, headers=HEADERS, timeout=15, verify=False)
-            if resp.status_code == 200:
-                jobs = resp.json().get("results", [])
-                print(f"[Adzuna/{pais.upper()}] {len(jobs)} ofertas")
-                for job in jobs:
-                    desc = job.get("description", "") or ""
-                    es_remoto = any(w in (job.get("title","") + desc).lower() for w in ["remoto","remote","teletrabajo"])
-                    if modalidad == "remote" and not es_remoto:
-                        continue
-                    ofertas.append({
-                        "fuente": f"Adzuna ({pais.upper()})",
-                        "titulo": job.get("title", ""),
-                        "empresa": job.get("company", {}).get("display_name", "No especificada"),
-                        "ubicacion": job.get("location", {}).get("display_name", "No especificada"),
-                        "modalidad": "Remoto" if es_remoto else "Presencial",
-                        "descripcion": desc[:600],
-                        "url": job.get("redirect_url", ""),
-                        "skills_requeridos": [],
-                        "requisitos": desc,
-                    })
-        except Exception as e:
-            print(f"[Adzuna/{pais.upper()}] Error: {e}")
-
-    return ofertas
 
 
 # ─────────────────────────────────────────
@@ -418,7 +375,6 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
 
     # Buscar en paralelo (secuencial por ahora)
     todas.extend(buscar_getonbrd(cargo, modalidad))
-    todas.extend(buscar_adzuna(cargo, modalidad))
     todas.extend(buscar_trabajando(cargo, ciudad))
     todas.extend(buscar_chiletrabajos(cargo, ciudad))
     todas.extend(buscar_computrabajo(cargo, ciudad))
