@@ -1,7 +1,13 @@
 """
 AGENTE 2: Buscador de Ofertas
 -----------------------------
-Busca ofertas en múltiples portales: Adzuna, Trabajando.com, Chiletrabajos, Computrabajo.
+Fuentes activas (confirmadas desde Streamlit Cloud):
+  - Chiletrabajos.cl  ✅
+  - Computrabajo.cl   (intentando)
+  - Laborum.cl        (intentando)
+
+Fuentes descartadas (bloqueadas desde cloud):
+  - Get on Board (404), Trabajando.cl (404), Indeed (403), Adzuna (bloqueado)
 """
 
 import requests
@@ -16,7 +22,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 dotenv_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
-
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -30,228 +35,72 @@ HEADERS = {
 
 
 # ─────────────────────────────────────────
-# GET ON BOARD (getonbrd.com)
-# ─────────────────────────────────────────
-
-# Mapa de cargo -> categorías relevantes en Get on Board
-GETONBRD_CATEGORIAS = {
-    "marketing": ["marketing-y-comunicacion", "gestion-y-empresa"],
-    "marketing digital": ["marketing-y-comunicacion"],
-    "diseño": ["diseno-ux-ui"],
-    "diseño ux": ["diseno-ux-ui"],
-    "ventas": ["gestion-y-empresa", "marketing-y-comunicacion"],
-    "business development": ["gestion-y-empresa"],
-    "producto": ["producto", "gestion-y-empresa"],
-    "data": ["datos-big-data-business-intelligence"],
-    "programacion": ["programacion"],
-    "default": ["marketing-y-comunicacion", "gestion-y-empresa"],
-}
-
-def buscar_getonbrd(cargo: str, modalidad: str = None) -> list[dict]:
-    """Busca ofertas en getonbrd.com via RSS (no requiere JavaScript)."""
-    ofertas = []
-
-    cargo_lower = cargo.lower()
-    categorias = None
-    for key in GETONBRD_CATEGORIAS:
-        if key in cargo_lower:
-            categorias = GETONBRD_CATEGORIAS[key]
-            break
-    if not categorias:
-        categorias = GETONBRD_CATEGORIAS["default"]
-
-    import xml.etree.ElementTree as ET
-
-    for categoria in categorias:
-        url = f"https://www.getonbrd.com/empleos/{categoria}.rss"
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=15, verify=False)
-            if resp.status_code != 200:
-                print(f"[GetOnBrd RSS/{categoria}] Error {resp.status_code}")
-                continue
-
-            root = ET.fromstring(resp.content)
-            ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
-            items = root.findall(".//item")
-            print(f"[GetOnBrd RSS/{categoria}] {len(items)} items en RSS")
-
-            for item in items:
-                titulo = (item.findtext("title") or "").strip()
-                link = (item.findtext("link") or "").strip()
-                descripcion = (item.findtext("description") or
-                               item.findtext("content:encoded", namespaces=ns) or "").strip()
-
-                if not titulo or not link:
-                    continue
-
-                # Detectar modalidad desde descripción
-                desc_lower = descripcion.lower()
-                if any(w in desc_lower for w in ["remoto", "remote", "full remote", "teletrabajo"]):
-                    modalidad_oferta = "Remoto"
-                elif any(w in desc_lower for w in ["híbrido", "hybrid"]):
-                    modalidad_oferta = "Híbrido"
-                else:
-                    modalidad_oferta = "No especificada"
-
-                if modalidad == "remote" and modalidad_oferta != "Remoto":
-                    continue
-
-                # Empresa suele estar en el título: "Cargo | Empresa"
-                empresa = "Ver en oferta"
-                if " | " in titulo:
-                    partes = titulo.split(" | ")
-                    titulo = partes[0].strip()
-                    empresa = partes[1].strip() if len(partes) > 1 else empresa
-
-                # Limpiar HTML de descripción
-                desc_soup = BeautifulSoup(descripcion, "html.parser")
-                texto_limpio = desc_soup.get_text(separator=" ", strip=True)[:600]
-
-                ofertas.append({
-                    "fuente": "Get on Board",
-                    "titulo": titulo[:100],
-                    "empresa": empresa,
-                    "ubicacion": "Chile / Remoto",
-                    "modalidad": modalidad_oferta,
-                    "descripcion": texto_limpio,
-                    "url": link,
-                    "skills_requeridos": [],
-                    "requisitos": texto_limpio,
-                })
-
-        except Exception as e:
-            print(f"[GetOnBrd RSS/{categoria}] Error: {e}")
-
-    print(f"[GetOnBrd RSS] Total: {len(ofertas)} ofertas")
-    return ofertas[:20]
-
-
-
-
-# ─────────────────────────────────────────
-# TRABAJANDO.COM
-# ─────────────────────────────────────────
-
-def buscar_trabajando(cargo: str, ciudad: str = None) -> list[dict]:
-    ofertas = []
-    query = cargo.replace(" ", "+")
-    url = f"https://www.trabajando.cl/empleos-{cargo.replace(' ', '-').lower()}"
-
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-        if resp.status_code != 200:
-            # Fallback con búsqueda
-            url2 = f"https://www.trabajando.cl/buscar-trabajo?q={query}"
-            resp = requests.get(url2, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-            if resp.status_code != 200:
-                print(f"[Trabajando.cl] Error {resp.status_code}")
-                return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        tarjetas = soup.select("article, .job-item, .oferta, [class*='job'], [class*='oferta'], li[class*='item'], .aviso")
-
-        if not tarjetas:
-            # Intentar con __NEXT_DATA__ o JSON embebido
-            next_data = soup.find("script", id="__NEXT_DATA__")
-            if next_data:
-                data = json.loads(next_data.string or "{}")
-                jobs = _extraer_jobs_recursivo(data)
-                for job in jobs[:10]:
-                    ofertas.append(job)
-                print(f"[Trabajando.com] {len(ofertas)} ofertas (JSON)")
-                return ofertas
-
-        for tarjeta in tarjetas[:10]:
-            titulo_el = tarjeta.select_one("h2, h3, h4, [class*='title'], [class*='nombre']")
-            link_el = tarjeta.select_one("a[href]")
-            empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company']")
-            if not titulo_el or not link_el:
-                continue
-            href = link_el.get("href", "")
-            if href and not href.startswith("http"):
-                href = "https://www.trabajando.com" + href
-            ofertas.append({
-                "fuente": "Trabajando.com",
-                "titulo": titulo_el.get_text(strip=True),
-                "empresa": empresa_el.get_text(strip=True) if empresa_el else "No especificada",
-                "ubicacion": "Chile",
-                "modalidad": "No especificada",
-                "descripcion": tarjeta.get_text(strip=True)[:400],
-                "url": href,
-                "skills_requeridos": [],
-                "requisitos": tarjeta.get_text(strip=True),
-            })
-
-        print(f"[Trabajando.com] {len(ofertas)} ofertas")
-    except Exception as e:
-        print(f"[Trabajando.com] Error: {e}")
-
-    return ofertas
-
-
-# ─────────────────────────────────────────
-# CHILETRABAJOS.CL
+# CHILETRABAJOS.CL ✅ confirmado funciona
 # ─────────────────────────────────────────
 
 def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
     query = cargo.replace(" ", "+")
-    url = f"https://www.chiletrabajos.cl/encuentra-un-empleo?keyword={query}"
+    query_dash = cargo.replace(" ", "-").lower()
 
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-        print(f"[Chiletrabajos] Status: {resp.status_code}")
-        if resp.status_code not in [200, 301, 302]:
-            return []
+    # Probar primero URL de categoría (más relevante), luego keyword
+    urls = [
+        f"https://www.chiletrabajos.cl/trabajos/{query_dash}",
+        f"https://www.chiletrabajos.cl/encuentra-un-empleo?keyword={query}",
+    ]
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        tarjetas = soup.select("div.job-item")
-        print(f"[Chiletrabajos] {len(tarjetas)} tarjetas encontradas")
+    resp = None
+    for url in urls:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
+            print(f"[Chiletrabajos] {url} → {r.status_code}")
+            if r.status_code == 200:
+                resp = r
+                break
+        except Exception as e:
+            print(f"[Chiletrabajos] Error: {e}")
 
-        for tarjeta in tarjetas[:20]:
-            # Estructura confirmada: h2.title a tiene título y URL
-            titulo_el = tarjeta.select_one("h2.title a, h2 a.font-weight-bold")
-            if not titulo_el:
-                continue
+    if not resp:
+        return []
 
-            titulo = titulo_el.get_text(strip=True)
-            href = titulo_el.get("href", "")
-            if not titulo or len(titulo) < 5:
-                continue
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tarjetas = soup.select("div.job-item")
+    print(f"[Chiletrabajos] {len(tarjetas)} tarjetas")
 
-            # Empresa: primer h3.meta (texto antes del link de ciudad)
-            empresa = "Ver en oferta"
-            meta_els = tarjeta.select("h3.meta")
-            if meta_els:
-                # Extraer solo el texto directo del h3, sin los links
-                texto_meta = meta_els[0].get_text(separator=" ", strip=True)
-                # Remover ciudad (suele estar al final separada por coma)
-                empresa = texto_meta.split(",")[0].strip() if "," in texto_meta else texto_meta
+    for tarjeta in tarjetas[:25]:
+        titulo_el = tarjeta.select_one("h2.title a, h2 a.font-weight-bold, h2 a")
+        if not titulo_el:
+            continue
+        titulo = titulo_el.get_text(strip=True)
+        href = titulo_el.get("href", "")
+        if not titulo or len(titulo) < 5:
+            continue
 
-            # Ciudad: link dentro de h3.meta que apunta a /ciudad/
-            ciudad_el = tarjeta.select_one("h3.meta a[href*='/ciudad/']")
-            ubicacion = ciudad_el.get_text(strip=True) if ciudad_el else "Chile"
+        empresa = "Ver en oferta"
+        meta_els = tarjeta.select("h3.meta")
+        if meta_els:
+            texto_meta = meta_els[0].get_text(separator=" ", strip=True)
+            empresa = texto_meta.split(",")[0].strip() if "," in texto_meta else texto_meta
 
-            texto_completo = tarjeta.get_text(separator=" ", strip=True)
-            es_remoto = any(w in texto_completo.lower() for w in ["remoto", "remote", "teletrabajo"])
+        ciudad_el = tarjeta.select_one("h3.meta a[href*='/ciudad/']")
+        ubicacion = ciudad_el.get_text(strip=True) if ciudad_el else "Chile"
 
-            ofertas.append({
-                "fuente": "Chiletrabajos",
-                "titulo": titulo[:100],
-                "empresa": empresa[:80],
-                "ubicacion": ubicacion,
-                "modalidad": "Remoto" if es_remoto else "No especificada",
-                "descripcion": texto_completo[:400],
-                "url": href,
-                "skills_requeridos": [],
-                "requisitos": texto_completo,
-            })
+        texto = tarjeta.get_text(separator=" ", strip=True)
+        es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo"])
 
-        print(f"[Chiletrabajos] {len(ofertas)} ofertas extraídas")
-    except Exception as e:
-        print(f"[Chiletrabajos] Error: {e}")
+        ofertas.append({
+            "fuente": "Chiletrabajos",
+            "titulo": titulo[:100],
+            "empresa": empresa[:80],
+            "ubicacion": ubicacion,
+            "modalidad": "Remoto" if es_remoto else "No especificada",
+            "descripcion": texto[:500],
+            "url": href,
+            "skills_requeridos": [],
+            "requisitos": texto,
+        })
 
+    print(f"[Chiletrabajos] {len(ofertas)} ofertas extraídas")
     return ofertas
 
 
@@ -261,146 +110,251 @@ def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
 
 def buscar_computrabajo(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
-    query = cargo.replace(" ", "+")
     query_dash = cargo.replace(" ", "-").lower()
+    query_plus = cargo.replace(" ", "+")
 
-    # Probar varias URLs hasta encontrar una que devuelva 200
-    urls_a_probar = [
+    urls = [
         f"https://www.computrabajo.cl/trabajo-de-{query_dash}",
-        f"https://www.computrabajo.cl/ofertas-de-trabajo/?q={query}&l=Chile",
+        f"https://www.computrabajo.cl/ofertas-de-trabajo/?q={query_plus}",
         f"https://www.computrabajo.cl/empleos-en-chile-de-{query_dash}",
+        f"https://www.computrabajo.cl/ofertas-de-trabajo/oferta-de-trabajo-de-{query_dash}",
     ]
 
     resp = None
-    for url in urls_a_probar:
+    for url in urls:
         try:
             r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
             print(f"[Computrabajo] {url} → {r.status_code}")
-            if r.status_code == 200:
+            if r.status_code == 200 and len(r.text) > 5000:
                 resp = r
                 break
         except Exception as e:
-            print(f"[Computrabajo] Error en {url}: {e}")
+            print(f"[Computrabajo] Error: {e}")
 
-    try:
-        if not resp or resp.status_code != 200:
-            print(f"[Computrabajo] Sin URL válida")
-            return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Computrabajo usa estructura de articles con clase box_offer
-        tarjetas = soup.select("article.box_offer, .offerItem, [class*='offer'], article")
-
-        for tarjeta in tarjetas[:10]:
-            titulo_el = tarjeta.select_one("h2, h3, .title_offer, [class*='title']")
-            link_el = tarjeta.select_one("a[href]")
-            empresa_el = tarjeta.select_one(".name_company, [class*='company'], [class*='empresa']")
-            ubicacion_el = tarjeta.select_one(".city, [class*='location'], [class*='ciudad']")
-            if not titulo_el:
-                continue
-            href = link_el.get("href", "") if link_el else ""
-            if href and not href.startswith("http"):
-                href = "https://www.computrabajo.cl" + href
-            ofertas.append({
-                "fuente": "Computrabajo",
-                "titulo": titulo_el.get_text(strip=True),
-                "empresa": empresa_el.get_text(strip=True) if empresa_el else "No especificada",
-                "ubicacion": ubicacion_el.get_text(strip=True) if ubicacion_el else "Chile",
-                "modalidad": "No especificada",
-                "descripcion": tarjeta.get_text(strip=True)[:400],
-                "url": href,
-                "skills_requeridos": [],
-                "requisitos": tarjeta.get_text(strip=True),
-            })
-
-        print(f"[Computrabajo] {len(ofertas)} ofertas")
-    except Exception as e:
-        print(f"[Computrabajo] Error: {e}")
-
-    return ofertas
-
-
-# ─────────────────────────────────────────
-# HELPER: extraer jobs de JSON recursivo
-# ─────────────────────────────────────────
-
-def _extraer_jobs_recursivo(data, profundidad=0) -> list[dict]:
-    if profundidad > 6:
+    if not resp:
+        print("[Computrabajo] Sin URL válida")
         return []
-    ofertas = []
-    if isinstance(data, list):
-        if data and isinstance(data[0], dict) and any(k in data[0] for k in ["title", "titulo", "nombre", "cargo"]):
-            for job in data:
-                o = _normalizar_job(job)
-                if o:
-                    ofertas.append(o)
-        else:
-            for item in data:
-                ofertas.extend(_extraer_jobs_recursivo(item, profundidad + 1))
-    elif isinstance(data, dict):
-        for key in ["jobs", "ofertas", "results", "data", "items", "vacantes", "pageProps", "props"]:
-            if key in data:
-                ofertas.extend(_extraer_jobs_recursivo(data[key], profundidad + 1))
-        if not ofertas:
-            for val in data.values():
-                if isinstance(val, (dict, list)):
-                    ofertas.extend(_extraer_jobs_recursivo(val, profundidad + 1))
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tarjetas = soup.select("article.box_offer, article[data-r], .offerItem, article")
+
+    for tarjeta in tarjetas[:15]:
+        titulo_el = tarjeta.select_one("h2, h3, .title_offer, [class*='title']")
+        link_el = tarjeta.select_one("a[href]")
+        empresa_el = tarjeta.select_one(".name_company, [class*='company'], [class*='empresa']")
+        ubicacion_el = tarjeta.select_one(".city, [class*='location'], [class*='ciudad']")
+        if not titulo_el:
+            continue
+        titulo = titulo_el.get_text(strip=True)
+        if not titulo or len(titulo) < 5:
+            continue
+        href = link_el.get("href", "") if link_el else ""
+        if href and not href.startswith("http"):
+            href = "https://www.computrabajo.cl" + href
+        texto = tarjeta.get_text(separator=" ", strip=True)
+        ofertas.append({
+            "fuente": "Computrabajo",
+            "titulo": titulo[:100],
+            "empresa": empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta",
+            "ubicacion": ubicacion_el.get_text(strip=True) if ubicacion_el else "Chile",
+            "modalidad": "Remoto" if "remoto" in texto.lower() else "No especificada",
+            "descripcion": texto[:500],
+            "url": href,
+            "skills_requeridos": [],
+            "requisitos": texto,
+        })
+
+    print(f"[Computrabajo] {len(ofertas)} ofertas")
     return ofertas
 
 
-def _normalizar_job(job: dict) -> dict | None:
-    titulo = job.get("title") or job.get("titulo") or job.get("nombre") or job.get("cargo", "")
-    if not titulo:
-        return None
-    empresa = job.get("company", job.get("empresa", {}))
-    if isinstance(empresa, dict):
-        empresa = empresa.get("name", empresa.get("nombre", "No especificada"))
-    return {
-        "fuente": job.get("source", "Portal de empleo"),
-        "titulo": titulo,
-        "empresa": str(empresa) if empresa else "No especificada",
-        "ubicacion": job.get("location", job.get("ubicacion", job.get("ciudad", "Chile"))),
-        "modalidad": "Remoto" if job.get("remote", job.get("remoto")) else "No especificada",
-        "descripcion": (job.get("description", job.get("descripcion", "")) or "")[:600],
-        "url": job.get("url", job.get("link", job.get("href", ""))),
-        "skills_requeridos": [],
-        "requisitos": job.get("description", job.get("descripcion", "")) or "",
-    }
+# ─────────────────────────────────────────
+# LABORUM.CL
+# ─────────────────────────────────────────
+
+def buscar_laborum(cargo: str, ciudad: str = None) -> list[dict]:
+    ofertas = []
+    query = cargo.replace(" ", "-").lower()
+    query_plus = cargo.replace(" ", "%20")
+
+    urls = [
+        f"https://www.laborum.cl/empleos-busqueda-{query}.html",
+        f"https://www.laborum.cl/empleos?q={query_plus}",
+    ]
+
+    resp = None
+    for url in urls:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
+            print(f"[Laborum] {url} → {r.status_code}")
+            if r.status_code == 200 and len(r.text) > 3000:
+                resp = r
+                break
+        except Exception as e:
+            print(f"[Laborum] Error: {e}")
+
+    if not resp:
+        print("[Laborum] Sin URL válida")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tarjetas = soup.select("article.aviso, .aviso, [class*='aviso'], [class*='job-card'], li.offer")
+
+    for tarjeta in tarjetas[:15]:
+        titulo_el = tarjeta.select_one("h2, h3, .title, [class*='title'], a[href*='/empleos/']")
+        link_el = tarjeta.select_one("a[href*='/empleos/'], a[href*='/aviso/'], a[href]")
+        empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], .empresa")
+        if not titulo_el:
+            continue
+        titulo = titulo_el.get_text(strip=True)
+        if not titulo or len(titulo) < 5:
+            continue
+        href = link_el.get("href", "") if link_el else ""
+        if href and not href.startswith("http"):
+            href = "https://www.laborum.cl" + href
+        texto = tarjeta.get_text(separator=" ", strip=True)
+        ofertas.append({
+            "fuente": "Laborum",
+            "titulo": titulo[:100],
+            "empresa": empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta",
+            "ubicacion": "Chile",
+            "modalidad": "Remoto" if "remoto" in texto.lower() else "No especificada",
+            "descripcion": texto[:500],
+            "url": href,
+            "skills_requeridos": [],
+            "requisitos": texto,
+        })
+
+    print(f"[Laborum] {len(ofertas)} ofertas")
+    return ofertas
+
+
+# ─────────────────────────────────────────
+# REMOTIVE.COM — API gratuita, sin key, empleos remotos
+# ─────────────────────────────────────────
+
+REMOTIVE_CATEGORIAS = {
+    "marketing": "marketing",
+    "diseño": "design",
+    "data": "data",
+    "producto": "product",
+    "ingenieria": "software-dev",
+    "ventas": "sales",
+    "rrhh": "hr",
+    "finanzas": "finance",
+    "default": "marketing",
+}
+
+def buscar_remotive(cargo: str) -> list[dict]:
+    cargo_lower = cargo.lower()
+    categoria = "marketing"
+    for key, val in REMOTIVE_CATEGORIAS.items():
+        if key in cargo_lower:
+            categoria = val
+            break
+
+    url = f"https://remotive.com/api/remote-jobs?category={categoria}&limit=30"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=12, verify=False)
+        print(f"[Remotive] Status: {resp.status_code}")
+        if resp.status_code != 200:
+            return []
+        jobs = resp.json().get("jobs", [])
+        print(f"[Remotive] {len(jobs)} ofertas")
+        ofertas = []
+        for job in jobs:
+            desc = BeautifulSoup(job.get("description", ""), "html.parser").get_text(separator=" ", strip=True)[:600]
+            ofertas.append({
+                "fuente": "Remotive (Remoto)",
+                "titulo": job.get("title", "")[:100],
+                "empresa": job.get("company_name", "Ver en oferta"),
+                "ubicacion": job.get("candidate_required_location", "Remoto / Global"),
+                "modalidad": "Remoto",
+                "descripcion": desc,
+                "url": job.get("url", ""),
+                "skills_requeridos": job.get("tags", []),
+                "requisitos": desc,
+            })
+        return ofertas
+    except Exception as e:
+        print(f"[Remotive] Error: {e}")
+        return []
+
+
+# ─────────────────────────────────────────
+# JOBICY.COM — API gratuita, sin key, empleos remotos
+# ─────────────────────────────────────────
+
+def buscar_jobicy(cargo: str) -> list[dict]:
+    # Jobicy tiene categorías fijas
+    cargo_lower = cargo.lower()
+    tag = "marketing"
+    if "diseño" in cargo_lower or "design" in cargo_lower:
+        tag = "design"
+    elif "data" in cargo_lower:
+        tag = "data"
+    elif "software" in cargo_lower or "developer" in cargo_lower:
+        tag = "engineering"
+
+    url = f"https://jobicy.com/api/v2/remote-jobs?tag={tag}&count=20"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=12, verify=False)
+        print(f"[Jobicy] Status: {resp.status_code}")
+        if resp.status_code != 200:
+            return []
+        jobs = resp.json().get("jobs", [])
+        print(f"[Jobicy] {len(jobs)} ofertas")
+        ofertas = []
+        for job in jobs:
+            desc = BeautifulSoup(job.get("jobDescription", ""), "html.parser").get_text(separator=" ", strip=True)[:600]
+            ofertas.append({
+                "fuente": "Jobicy (Remoto)",
+                "titulo": job.get("jobTitle", "")[:100],
+                "empresa": job.get("companyName", "Ver en oferta"),
+                "ubicacion": job.get("jobGeo", "Remoto / Global"),
+                "modalidad": "Remoto",
+                "descripcion": desc,
+                "url": job.get("url", ""),
+                "skills_requeridos": job.get("jobIndustry", []),
+                "requisitos": desc,
+            })
+        return ofertas
+    except Exception as e:
+        print(f"[Jobicy] Error: {e}")
+        return []
 
 
 # ─────────────────────────────────────────
 # PRE-FILTRO DE RELEVANCIA
 # ─────────────────────────────────────────
 
-# Palabras clave relacionadas por área (para filtrar ofertas irrelevantes)
 KEYWORDS_RELEVANCIA = {
-    "marketing": ["marketing", "digital", "contenido", "community", "seo", "sem", "marca",
+    "marketing": ["marketing", "digital", "contenido", "community manager", "seo", "sem",
                   "comunicacion", "publicidad", "growth", "redes sociales", "campañ", "brand",
-                  "e-commerce", "ecommerce", "crm", "email", "inbound", "performance"],
-    "ventas": ["venta", "vendedor", "comercial", "sales", "ejecutivo", "cliente", "negocio"],
-    "diseño": ["diseño", "design", "ux", "ui", "grafico", "creativo", "visual"],
-    "data": ["data", "analista", "analytics", "bi", "business intelligence", "sql", "python"],
-    "producto": ["producto", "product", "manager", "pm", "roadmap"],
-    "rrhh": ["rrhh", "recursos humanos", "hr", "reclutamiento", "talent"],
-    "finanzas": ["finanz", "contab", "contador", "tesorero", "control de gestion"],
-    "enfermeria": ["enferm", "salud", "clinica", "hospital", "paciente", "medic"],
-    "ingenieria": ["ingeniero", "ingenieria", "software", "developer", "programador"],
+                  "ecommerce", "crm", "email", "inbound", "performance", "pauta"],
+    "ventas": ["venta", "vendedor", "comercial", "sales", "ejecutivo comercial", "prospect"],
+    "diseño": ["diseño", "design", "ux", "ui", "grafico", "creativo", "visual", "multimedia"],
+    "data": ["data", "analista", "analytics", "business intelligence", "sql", "machine learning"],
+    "producto": ["producto", "product manager", "product owner", "roadmap"],
+    "rrhh": ["recursos humanos", "reclutamiento", "talent", "people", "gestión de personas"],
+    "finanzas": ["finanz", "contab", "contador", "control de gestion", "tesorero"],
+    "enfermeria": ["enferm", "salud", "clinica", "hospital", "paciente", "medic", "nurse"],
+    "ingenieria": ["ingeniero", "ingenieria", "software", "developer", "programador", "devops"],
+    "administracion": ["administraci", "admin", "secretaria", "asistente", "back office"],
 }
 
 def _oferta_es_relevante(oferta: dict, cargo: str) -> bool:
-    """Verifica si la oferta es relevante para el cargo buscado."""
     titulo = oferta.get("titulo", "").lower()
     descripcion = oferta.get("descripcion", "").lower()
     texto = titulo + " " + descripcion
 
-    # Buscar palabras del cargo directamente en el título
-    palabras_cargo = cargo.lower().split()
+    # Palabras del cargo en el título (más estricto)
+    palabras_cargo = [p for p in cargo.lower().split() if len(p) > 3]
     for palabra in palabras_cargo:
-        if len(palabra) > 3 and palabra in titulo:
+        if palabra in titulo:
             return True
 
-    # Buscar en lista de keywords relacionados
+    # Keywords del área en título o descripción
     cargo_lower = cargo.lower()
     keywords = []
     for key, words in KEYWORDS_RELEVANCIA.items():
@@ -409,10 +363,8 @@ def _oferta_es_relevante(oferta: dict, cargo: str) -> bool:
             break
 
     if not keywords:
-        # Si no hay match exacto, usar palabras del cargo
         keywords = palabras_cargo
 
-    # Al menos 1 keyword debe aparecer en título o descripción
     return any(kw in texto for kw in keywords)
 
 
@@ -424,16 +376,16 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
     if not cargo or cargo.strip() == "":
         cargo = "marketing"
 
-    print(f"[Buscador] Buscando '{cargo}' | modalidad: {modalidad} | ciudad: {ciudad}")
+    print(f"\n[Buscador] '{cargo}' | modalidad={modalidad} | ciudad={ciudad}")
 
     todas = []
-
-    todas.extend(buscar_getonbrd(cargo, modalidad))
-    todas.extend(buscar_trabajando(cargo, ciudad))
     todas.extend(buscar_chiletrabajos(cargo, ciudad))
     todas.extend(buscar_computrabajo(cargo, ciudad))
+    todas.extend(buscar_laborum(cargo, ciudad))
+    todas.extend(buscar_remotive(cargo))
+    todas.extend(buscar_jobicy(cargo))
 
-    # Eliminar duplicados por URL
+    # Deduplicar por URL
     vistas = set()
     unicas = []
     for o in todas:
@@ -442,9 +394,13 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
             vistas.add(key)
             unicas.append(o)
 
-    # Pre-filtrar por relevancia antes de gastar tokens en evaluación
+    # Filtro de modalidad
+    if modalidad == "remote":
+        unicas = [o for o in unicas if o.get("modalidad") == "Remoto"]
+
+    # Pre-filtro de relevancia
     relevantes = [o for o in unicas if _oferta_es_relevante(o, cargo)]
-    print(f"[Buscador] {len(unicas)} ofertas únicas → {len(relevantes)} relevantes para '{cargo}'")
+    print(f"[Buscador] {len(unicas)} únicas → {len(relevantes)} relevantes para '{cargo}'")
 
     return relevantes[:max_resultados]
 
