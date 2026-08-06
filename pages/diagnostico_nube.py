@@ -23,6 +23,7 @@ st.caption("Esto muestra qué portales son accesibles desde Streamlit Cloud")
 
 if st.button("Probar conexiones"):
     pruebas = [
+        ("Get on Board RSS", "https://www.getonbrd.com/empleos/marketing-y-comunicacion.rss"),
         ("Get on Board (categoría)", "https://www.getonbrd.com/empleos/marketing-y-comunicacion"),
         ("Get on Board (búsqueda)", "https://www.getonbrd.com/empleos?query=marketing"),
         ("Computrabajo", "https://www.computrabajo.cl/ofertas-de-trabajo/oferta-de-trabajo-de-marketing"),
@@ -37,7 +38,15 @@ if st.button("Probar conexiones"):
             soup = BeautifulSoup(r.text, "html.parser")
 
             # Contar ofertas según portal
-            if "getonbrd" in url:
+            if ".rss" in url:
+                import xml.etree.ElementTree as ET
+                try:
+                    root = ET.fromstring(r.content)
+                    items = root.findall(".//item")
+                    conteo = f"{len(items)} ofertas en RSS"
+                except:
+                    conteo = f"RSS parse error — {r.text[:100]}"
+            elif "getonbrd" in url:
                 items = soup.select('a[href*="/empleos/"][href*="-"]')
                 items = [a for a in items if a.get("href","").count("/") >= 3]
                 conteo = f"{len(items)} links de ofertas"

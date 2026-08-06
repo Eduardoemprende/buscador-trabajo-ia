@@ -50,10 +50,9 @@ GETONBRD_CATEGORIAS = {
 }
 
 def buscar_getonbrd(cargo: str, modalidad: str = None) -> list[dict]:
-    """Busca ofertas en getonbrd.com por categoría."""
+    """Busca ofertas en getonbrd.com via RSS (no requiere JavaScript)."""
     ofertas = []
 
-    # Determinar categorías según cargo
     cargo_lower = cargo.lower()
     categorias = None
     for key in GETONBRD_CATEGORIAS:
@@ -63,58 +62,52 @@ def buscar_getonbrd(cargo: str, modalidad: str = None) -> list[dict]:
     if not categorias:
         categorias = GETONBRD_CATEGORIAS["default"]
 
+    import xml.etree.ElementTree as ET
+
     for categoria in categorias:
-        url = f"https://www.getonbrd.com/empleos/{categoria}"
+        url = f"https://www.getonbrd.com/empleos/{categoria}.rss"
         try:
             resp = requests.get(url, headers=HEADERS, timeout=15, verify=False)
             if resp.status_code != 200:
-                print(f"[GetOnBrd/{categoria}] Error {resp.status_code}")
+                print(f"[GetOnBrd RSS/{categoria}] Error {resp.status_code}")
                 continue
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+            root = ET.fromstring(resp.content)
+            ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
+            items = root.findall(".//item")
+            print(f"[GetOnBrd RSS/{categoria}] {len(items)} items en RSS")
 
-            # Cada oferta está en un <a href="/empleos/..."> con h4 adentro
-            vistos = set()
-            tarjetas = soup.select('a[href*="/empleos/"][href*="-"]')
+            for item in items:
+                titulo = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                descripcion = (item.findtext("description") or
+                               item.findtext("content:encoded", namespaces=ns) or "").strip()
 
-            for a in tarjetas:
-                href = a.get("href", "")
-                # Filtrar links de navegación y duplicados
-                if not href or href.count("/") < 3:
-                    continue
-                # URL limpia sin parámetros
-                href_limpio = href.split("?")[0]
-                if href_limpio in vistos:
-                    continue
-                vistos.add(href_limpio)
-
-                if not href_limpio.startswith("http"):
-                    href_limpio = "https://www.getonbrd.com" + href_limpio
-
-                texto = a.get_text(separator=" | ", strip=True)
-                partes = [p.strip() for p in texto.split("|") if p.strip()]
-
-                titulo = partes[0] if partes else ""
-                if not titulo or len(titulo) < 3:
+                if not titulo or not link:
                     continue
 
-                # Extraer modalidad y empresa del texto
-                modalidad_oferta = "No especificada"
-                empresa = "Ver en oferta"
-                for p in partes[1:]:
-                    if any(w in p.lower() for w in ["remote", "remoto", "full remote"]):
-                        modalidad_oferta = "Remoto"
-                    elif any(w in p.lower() for w in ["hybrid", "híbrido", "home"]):
-                        modalidad_oferta = "Híbrido"
-                    elif any(w in p.lower() for w in ["full time", "part time", "freelance"]):
-                        continue
-                    elif any(w in p.lower() for w in ["santiago", "remote", "remoto"]):
-                        continue
-                    elif len(p) > 2 and empresa == "Ver en oferta":
-                        empresa = p
+                # Detectar modalidad desde descripción
+                desc_lower = descripcion.lower()
+                if any(w in desc_lower for w in ["remoto", "remote", "full remote", "teletrabajo"]):
+                    modalidad_oferta = "Remoto"
+                elif any(w in desc_lower for w in ["híbrido", "hybrid"]):
+                    modalidad_oferta = "Híbrido"
+                else:
+                    modalidad_oferta = "No especificada"
 
                 if modalidad == "remote" and modalidad_oferta != "Remoto":
                     continue
+
+                # Empresa suele estar en el título: "Cargo | Empresa"
+                empresa = "Ver en oferta"
+                if " | " in titulo:
+                    partes = titulo.split(" | ")
+                    titulo = partes[0].strip()
+                    empresa = partes[1].strip() if len(partes) > 1 else empresa
+
+                # Limpiar HTML de descripción
+                desc_soup = BeautifulSoup(descripcion, "html.parser")
+                texto_limpio = desc_soup.get_text(separator=" ", strip=True)[:600]
 
                 ofertas.append({
                     "fuente": "Get on Board",
@@ -122,17 +115,16 @@ def buscar_getonbrd(cargo: str, modalidad: str = None) -> list[dict]:
                     "empresa": empresa,
                     "ubicacion": "Chile / Remoto",
                     "modalidad": modalidad_oferta,
-                    "descripcion": texto[:400],
-                    "url": href_limpio,
+                    "descripcion": texto_limpio,
+                    "url": link,
                     "skills_requeridos": [],
-                    "requisitos": texto,
+                    "requisitos": texto_limpio,
                 })
 
-            print(f"[GetOnBrd/{categoria}] {len(ofertas)} ofertas")
-
         except Exception as e:
-            print(f"[GetOnBrd/{categoria}] Error: {e}")
+            print(f"[GetOnBrd RSS/{categoria}] Error: {e}")
 
+    print(f"[GetOnBrd RSS] Total: {len(ofertas)} ofertas")
     return ofertas[:20]
 
 
@@ -247,54 +239,65 @@ def buscar_trabajando(cargo: str, ciudad: str = None) -> list[dict]:
 
 def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
-    # Usar búsqueda por texto para resultados más relevantes
     query = cargo.replace(" ", "+")
-    url = f"https://www.chiletrabajos.cl/encuentra-un-empleo?action=search&filterSearch=Buscar&keyword={query}"
+    # URL de búsqueda que confirmamos funciona (200 + 30 items)
+    url = f"https://www.chiletrabajos.cl/encuentra-un-empleo?keyword={query}"
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-        if resp.status_code != 200:
-            url = f"https://www.chiletrabajos.cl/trabajos/{cargo.replace(' ', '-').lower()}"
-            resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-            if resp.status_code != 200:
-                print(f"[Chiletrabajos] Error {resp.status_code}")
-                return []
+        print(f"[Chiletrabajos] Status: {resp.status_code} | URL: {resp.url}")
+        if resp.status_code not in [200, 301, 302]:
+            print(f"[Chiletrabajos] Error {resp.status_code}")
+            return []
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Buscar JSON embebido
-        next_data = soup.find("script", id="__NEXT_DATA__")
-        if next_data:
-            data = json.loads(next_data.string or "{}")
-            jobs = _extraer_jobs_recursivo(data)
-            print(f"[Chiletrabajos] {len(jobs)} ofertas (JSON)")
-            return jobs[:10]
+        # Intentar varios selectores — el diagnóstico encontró 30 items
+        tarjetas = (
+            soup.select("div.job-item") or
+            soup.select("article") or
+            soup.select(".oferta") or
+            soup.select("[class*='job']") or
+            soup.select("[class*='oferta']") or
+            soup.select("li[class*='item']")
+        )
 
-        # Scraping HTML
-        tarjetas = soup.select("div.job-item")
+        print(f"[Chiletrabajos] {len(tarjetas)} tarjetas encontradas")
+
         for tarjeta in tarjetas[:15]:
-            link_el = tarjeta.select_one("a[href]")
-            titulo_el = tarjeta.select_one("h2, h3, a")
-            empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], strong")
-            ubicacion_el = tarjeta.select_one("[class*='ciudad'], [class*='location'], [class*='ubicacion']")
-            if not titulo_el or not link_el:
+            # Buscar link y título
+            link_el = tarjeta.select_one("a[href*='/empleo/'], a[href*='/trabajo/'], a[href*='/oferta/'], a[href]")
+            titulo_el = tarjeta.select_one("h2, h3, h4, .title, [class*='title'], [class*='titulo']")
+            empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], strong, .company")
+            ubicacion_el = tarjeta.select_one("[class*='ciudad'], [class*='location'], [class*='ubic'], .city")
+
+            if not titulo_el and not link_el:
                 continue
-            href = link_el.get("href", "")
+
+            titulo = (titulo_el or link_el).get_text(strip=True)
+            if not titulo or len(titulo) < 5:
+                continue
+
+            href = link_el.get("href", "") if link_el else ""
             if href and not href.startswith("http"):
                 href = "https://www.chiletrabajos.cl" + href
+
+            texto = tarjeta.get_text(separator=" ", strip=True)
+            es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo"])
+
             ofertas.append({
                 "fuente": "Chiletrabajos",
-                "titulo": titulo_el.get_text(strip=True)[:100],
+                "titulo": titulo[:100],
                 "empresa": empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta",
                 "ubicacion": ubicacion_el.get_text(strip=True) if ubicacion_el else "Chile",
-                "modalidad": "No especificada",
-                "descripcion": tarjeta.get_text(strip=True)[:400],
+                "modalidad": "Remoto" if es_remoto else "No especificada",
+                "descripcion": texto[:400],
                 "url": href,
                 "skills_requeridos": [],
-                "requisitos": tarjeta.get_text(strip=True),
+                "requisitos": texto,
             })
 
-        print(f"[Chiletrabajos] {len(ofertas)} ofertas")
+        print(f"[Chiletrabajos] {len(ofertas)} ofertas extraídas")
     except Exception as e:
         print(f"[Chiletrabajos] Error: {e}")
 
