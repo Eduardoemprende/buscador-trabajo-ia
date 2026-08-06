@@ -42,12 +42,15 @@ Para correr la app siempre usar:
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && streamlit run app.py
 ```
 
+## App en la nube ☁️
+URL: https://buscador-trabajo-ia-lofwra3zhwuxvplwsmimjt.streamlit.app
+GitHub: https://github.com/Eduardoemprende/buscador-trabajo-ia
+
 ## Próximos pasos posibles ⏭️
-- Agregar más fuentes de trabajo (LinkedIn, Trabajando.com, etc.)
+- Agregar más fuentes de trabajo con mejor cobertura en Chile (Trabajando.com, Laborum.cl)
 - Mejorar el UI/diseño
-- Subir la app a la nube (Streamlit Cloud) para acceder sin Terminal
-- Agregar más países en Adzuna
 - Guardar historial de búsquedas
+- Agregar login de usuarios para versión SaaS
 
 ## Carpeta del Proyecto
 Guardar todos los archivos del proyecto en: Desktop > "Eduardo Claude" > "busqueda de trabajo con IA"
