@@ -27,6 +27,111 @@ HEADERS = {
 
 
 # ─────────────────────────────────────────
+# GET ON BOARD (getonbrd.com)
+# ─────────────────────────────────────────
+
+# Mapa de cargo -> categorías relevantes en Get on Board
+GETONBRD_CATEGORIAS = {
+    "marketing": ["marketing-y-comunicacion", "gestion-y-empresa"],
+    "marketing digital": ["marketing-y-comunicacion"],
+    "diseño": ["diseno-ux-ui"],
+    "diseño ux": ["diseno-ux-ui"],
+    "ventas": ["gestion-y-empresa", "marketing-y-comunicacion"],
+    "business development": ["gestion-y-empresa"],
+    "producto": ["producto", "gestion-y-empresa"],
+    "data": ["datos-big-data-business-intelligence"],
+    "programacion": ["programacion"],
+    "default": ["marketing-y-comunicacion", "gestion-y-empresa"],
+}
+
+def buscar_getonbrd(cargo: str, modalidad: str = None) -> list[dict]:
+    """Busca ofertas en getonbrd.com por categoría."""
+    ofertas = []
+
+    # Determinar categorías según cargo
+    cargo_lower = cargo.lower()
+    categorias = None
+    for key in GETONBRD_CATEGORIAS:
+        if key in cargo_lower:
+            categorias = GETONBRD_CATEGORIAS[key]
+            break
+    if not categorias:
+        categorias = GETONBRD_CATEGORIAS["default"]
+
+    for categoria in categorias:
+        url = f"https://www.getonbrd.com/empleos/{categoria}"
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15, verify=False)
+            if resp.status_code != 200:
+                print(f"[GetOnBrd/{categoria}] Error {resp.status_code}")
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Cada oferta está en un <a href="/empleos/..."> con h4 adentro
+            vistos = set()
+            tarjetas = soup.select('a[href*="/empleos/"][href*="-"]')
+
+            for a in tarjetas:
+                href = a.get("href", "")
+                # Filtrar links de navegación y duplicados
+                if not href or href.count("/") < 3:
+                    continue
+                # URL limpia sin parámetros
+                href_limpio = href.split("?")[0]
+                if href_limpio in vistos:
+                    continue
+                vistos.add(href_limpio)
+
+                if not href_limpio.startswith("http"):
+                    href_limpio = "https://www.getonbrd.com" + href_limpio
+
+                texto = a.get_text(separator=" | ", strip=True)
+                partes = [p.strip() for p in texto.split("|") if p.strip()]
+
+                titulo = partes[0] if partes else ""
+                if not titulo or len(titulo) < 3:
+                    continue
+
+                # Extraer modalidad y empresa del texto
+                modalidad_oferta = "No especificada"
+                empresa = "Ver en oferta"
+                for p in partes[1:]:
+                    if any(w in p.lower() for w in ["remote", "remoto", "full remote"]):
+                        modalidad_oferta = "Remoto"
+                    elif any(w in p.lower() for w in ["hybrid", "híbrido", "home"]):
+                        modalidad_oferta = "Híbrido"
+                    elif any(w in p.lower() for w in ["full time", "part time", "freelance"]):
+                        continue
+                    elif any(w in p.lower() for w in ["santiago", "remote", "remoto"]):
+                        continue
+                    elif len(p) > 2 and empresa == "Ver en oferta":
+                        empresa = p
+
+                if modalidad == "remote" and modalidad_oferta != "Remoto":
+                    continue
+
+                ofertas.append({
+                    "fuente": "Get on Board",
+                    "titulo": titulo[:100],
+                    "empresa": empresa,
+                    "ubicacion": "Chile / Remoto",
+                    "modalidad": modalidad_oferta,
+                    "descripcion": texto[:400],
+                    "url": href_limpio,
+                    "skills_requeridos": [],
+                    "requisitos": texto,
+                })
+
+            print(f"[GetOnBrd/{categoria}] {len(ofertas)} ofertas")
+
+        except Exception as e:
+            print(f"[GetOnBrd/{categoria}] Error: {e}")
+
+    return ofertas[:20]
+
+
+# ─────────────────────────────────────────
 # ADZUNA (API oficial — CL, AR, ES, GB, US)
 # ─────────────────────────────────────────
 
@@ -304,6 +409,7 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
     todas = []
 
     # Buscar en paralelo (secuencial por ahora)
+    todas.extend(buscar_getonbrd(cargo, modalidad))
     todas.extend(buscar_adzuna(cargo, modalidad))
     todas.extend(buscar_trabajando(cargo, ciudad))
     todas.extend(buscar_chiletrabajos(cargo, ciudad))
