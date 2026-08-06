@@ -261,17 +261,31 @@ def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
 
 def buscar_computrabajo(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
-    query = cargo.replace(" ", "-").lower()
-    url = f"https://www.computrabajo.cl/ofertas-de-trabajo/oferta-de-trabajo-de-{query}"
+    query = cargo.replace(" ", "+")
+    query_dash = cargo.replace(" ", "-").lower()
+
+    # Probar varias URLs hasta encontrar una que devuelva 200
+    urls_a_probar = [
+        f"https://www.computrabajo.cl/trabajo-de-{query_dash}",
+        f"https://www.computrabajo.cl/ofertas-de-trabajo/?q={query}&l=Chile",
+        f"https://www.computrabajo.cl/empleos-en-chile-de-{query_dash}",
+    ]
+
+    resp = None
+    for url in urls_a_probar:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
+            print(f"[Computrabajo] {url} → {r.status_code}")
+            if r.status_code == 200:
+                resp = r
+                break
+        except Exception as e:
+            print(f"[Computrabajo] Error en {url}: {e}")
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-        if resp.status_code != 200:
-            url = f"https://www.computrabajo.cl/trabajo-de-{query}"
-            resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-            if resp.status_code != 200:
-                print(f"[Computrabajo] Error {resp.status_code}")
-                return []
+        if not resp or resp.status_code != 200:
+            print(f"[Computrabajo] Sin URL válida")
+            return []
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -356,6 +370,53 @@ def _normalizar_job(job: dict) -> dict | None:
 
 
 # ─────────────────────────────────────────
+# PRE-FILTRO DE RELEVANCIA
+# ─────────────────────────────────────────
+
+# Palabras clave relacionadas por área (para filtrar ofertas irrelevantes)
+KEYWORDS_RELEVANCIA = {
+    "marketing": ["marketing", "digital", "contenido", "community", "seo", "sem", "marca",
+                  "comunicacion", "publicidad", "growth", "redes sociales", "campañ", "brand",
+                  "e-commerce", "ecommerce", "crm", "email", "inbound", "performance"],
+    "ventas": ["venta", "vendedor", "comercial", "sales", "ejecutivo", "cliente", "negocio"],
+    "diseño": ["diseño", "design", "ux", "ui", "grafico", "creativo", "visual"],
+    "data": ["data", "analista", "analytics", "bi", "business intelligence", "sql", "python"],
+    "producto": ["producto", "product", "manager", "pm", "roadmap"],
+    "rrhh": ["rrhh", "recursos humanos", "hr", "reclutamiento", "talent"],
+    "finanzas": ["finanz", "contab", "contador", "tesorero", "control de gestion"],
+    "enfermeria": ["enferm", "salud", "clinica", "hospital", "paciente", "medic"],
+    "ingenieria": ["ingeniero", "ingenieria", "software", "developer", "programador"],
+}
+
+def _oferta_es_relevante(oferta: dict, cargo: str) -> bool:
+    """Verifica si la oferta es relevante para el cargo buscado."""
+    titulo = oferta.get("titulo", "").lower()
+    descripcion = oferta.get("descripcion", "").lower()
+    texto = titulo + " " + descripcion
+
+    # Buscar palabras del cargo directamente en el título
+    palabras_cargo = cargo.lower().split()
+    for palabra in palabras_cargo:
+        if len(palabra) > 3 and palabra in titulo:
+            return True
+
+    # Buscar en lista de keywords relacionados
+    cargo_lower = cargo.lower()
+    keywords = []
+    for key, words in KEYWORDS_RELEVANCIA.items():
+        if key in cargo_lower:
+            keywords = words
+            break
+
+    if not keywords:
+        # Si no hay match exacto, usar palabras del cargo
+        keywords = palabras_cargo
+
+    # Al menos 1 keyword debe aparecer en título o descripción
+    return any(kw in texto for kw in keywords)
+
+
+# ─────────────────────────────────────────
 # FUNCIÓN PRINCIPAL
 # ─────────────────────────────────────────
 
@@ -367,7 +428,6 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
 
     todas = []
 
-    # Buscar en paralelo (secuencial por ahora)
     todas.extend(buscar_getonbrd(cargo, modalidad))
     todas.extend(buscar_trabajando(cargo, ciudad))
     todas.extend(buscar_chiletrabajos(cargo, ciudad))
@@ -382,8 +442,11 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
             vistas.add(key)
             unicas.append(o)
 
-    print(f"[Buscador] Total: {len(unicas)} ofertas únicas")
-    return unicas[:max_resultados]
+    # Pre-filtrar por relevancia antes de gastar tokens en evaluación
+    relevantes = [o for o in unicas if _oferta_es_relevante(o, cargo)]
+    print(f"[Buscador] {len(unicas)} ofertas únicas → {len(relevantes)} relevantes para '{cargo}'")
+
+    return relevantes[:max_resultados]
 
 
 if __name__ == "__main__":
