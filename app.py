@@ -12,6 +12,13 @@ import os
 for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"]:
     os.environ.pop(var, None)
 
+# Inyectar secrets de Streamlit Cloud como variables de entorno
+try:
+    for key, value in st.secrets.items():
+        os.environ[key] = str(value)
+except Exception:
+    pass  # En local no hay secrets, usa el .env
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from agents.orchestrator import buscar_trabajo
 
