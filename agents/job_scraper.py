@@ -197,61 +197,55 @@ def buscar_trabajando(cargo: str, ciudad: str = None) -> list[dict]:
 def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
     query = cargo.replace(" ", "+")
-    # URL de búsqueda que confirmamos funciona (200 + 30 items)
     url = f"https://www.chiletrabajos.cl/encuentra-un-empleo?keyword={query}"
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15, verify=False, allow_redirects=True)
-        print(f"[Chiletrabajos] Status: {resp.status_code} | URL: {resp.url}")
+        print(f"[Chiletrabajos] Status: {resp.status_code}")
         if resp.status_code not in [200, 301, 302]:
-            print(f"[Chiletrabajos] Error {resp.status_code}")
             return []
 
         soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Intentar varios selectores — el diagnóstico encontró 30 items
-        tarjetas = (
-            soup.select("div.job-item") or
-            soup.select("article") or
-            soup.select(".oferta") or
-            soup.select("[class*='job']") or
-            soup.select("[class*='oferta']") or
-            soup.select("li[class*='item']")
-        )
-
+        tarjetas = soup.select("div.job-item")
         print(f"[Chiletrabajos] {len(tarjetas)} tarjetas encontradas")
 
-        for tarjeta in tarjetas[:15]:
-            # Buscar link y título
-            link_el = tarjeta.select_one("a[href*='/empleo/'], a[href*='/trabajo/'], a[href*='/oferta/'], a[href]")
-            titulo_el = tarjeta.select_one("h2, h3, h4, .title, [class*='title'], [class*='titulo']")
-            empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], strong, .company")
-            ubicacion_el = tarjeta.select_one("[class*='ciudad'], [class*='location'], [class*='ubic'], .city")
-
-            if not titulo_el and not link_el:
+        for tarjeta in tarjetas[:20]:
+            # Estructura confirmada: h2.title a tiene título y URL
+            titulo_el = tarjeta.select_one("h2.title a, h2 a.font-weight-bold")
+            if not titulo_el:
                 continue
 
-            titulo = (titulo_el or link_el).get_text(strip=True)
+            titulo = titulo_el.get_text(strip=True)
+            href = titulo_el.get("href", "")
             if not titulo or len(titulo) < 5:
                 continue
 
-            href = link_el.get("href", "") if link_el else ""
-            if href and not href.startswith("http"):
-                href = "https://www.chiletrabajos.cl" + href
+            # Empresa: primer h3.meta (texto antes del link de ciudad)
+            empresa = "Ver en oferta"
+            meta_els = tarjeta.select("h3.meta")
+            if meta_els:
+                # Extraer solo el texto directo del h3, sin los links
+                texto_meta = meta_els[0].get_text(separator=" ", strip=True)
+                # Remover ciudad (suele estar al final separada por coma)
+                empresa = texto_meta.split(",")[0].strip() if "," in texto_meta else texto_meta
 
-            texto = tarjeta.get_text(separator=" ", strip=True)
-            es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo"])
+            # Ciudad: link dentro de h3.meta que apunta a /ciudad/
+            ciudad_el = tarjeta.select_one("h3.meta a[href*='/ciudad/']")
+            ubicacion = ciudad_el.get_text(strip=True) if ciudad_el else "Chile"
+
+            texto_completo = tarjeta.get_text(separator=" ", strip=True)
+            es_remoto = any(w in texto_completo.lower() for w in ["remoto", "remote", "teletrabajo"])
 
             ofertas.append({
                 "fuente": "Chiletrabajos",
                 "titulo": titulo[:100],
-                "empresa": empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta",
-                "ubicacion": ubicacion_el.get_text(strip=True) if ubicacion_el else "Chile",
+                "empresa": empresa[:80],
+                "ubicacion": ubicacion,
                 "modalidad": "Remoto" if es_remoto else "No especificada",
-                "descripcion": texto[:400],
+                "descripcion": texto_completo[:400],
                 "url": href,
                 "skills_requeridos": [],
-                "requisitos": texto,
+                "requisitos": texto_completo,
             })
 
         print(f"[Chiletrabajos] {len(ofertas)} ofertas extraídas")
