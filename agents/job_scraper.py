@@ -22,6 +22,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 dotenv_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
+
+def scraper_get(url: str, timeout: int = 20) -> requests.Response:
+    """Hace el request a través de ScraperAPI para evitar bloqueos."""
+    if SCRAPER_API_KEY:
+        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={requests.utils.quote(url, safe='')}"
+        return requests.get(proxy_url, headers=HEADERS, timeout=timeout, verify=False)
+    else:
+        return requests.get(url, headers=HEADERS, timeout=timeout, verify=False)
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -52,7 +62,7 @@ def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
     resp = None
     for url in urls:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
+            r = scraper_get(url, timeout=20)
             print(f"[Chiletrabajos] {url} → {r.status_code}")
             if r.status_code == 200:
                 resp = r
@@ -123,7 +133,7 @@ def buscar_computrabajo(cargo: str, ciudad: str = None) -> list[dict]:
     resp = None
     for url in urls:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
+            r = scraper_get(url, timeout=20)
             print(f"[Computrabajo] {url} → {r.status_code}")
             if r.status_code == 200 and len(r.text) > 5000:
                 resp = r
@@ -185,7 +195,7 @@ def buscar_laborum(cargo: str, ciudad: str = None) -> list[dict]:
     resp = None
     for url in urls:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=12, verify=False, allow_redirects=True)
+            r = scraper_get(url, timeout=20)
             print(f"[Laborum] {url} → {r.status_code}")
             if r.status_code == 200 and len(r.text) > 3000:
                 resp = r
