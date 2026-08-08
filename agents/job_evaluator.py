@@ -57,12 +57,12 @@ OFERTA DE TRABAJO:
 - Empresa: {oferta.get('empresa', 'N/A')}
 - Modalidad: {oferta.get('modalidad', 'N/A')}
 - Ubicación: {oferta.get('ubicacion', 'N/A')}
-- Descripción/Requisitos: {oferta.get('requisitos', oferta.get('descripcion', 'N/A'))[:1000]}
+- Descripción/Requisitos: {oferta.get('requisitos', oferta.get('descripcion', 'N/A'))[:2500]}
 
 Evalúa y devuelve SOLO este JSON, sin explicaciones adicionales:
 {{
     "puntaje": numero del 0 al 100,
-    "califica": true o false (true si puntaje >= 40),
+    "califica": true o false (true si puntaje >= 50),
     "fortalezas": ["razón 1 por qué califica", "razón 2"],
     "brechas": ["cosa que le falta 1", "cosa que le falta 2"],
     "explicacion": "evaluación en 2-3 oraciones directas",
@@ -123,7 +123,7 @@ def evaluar_todas(perfil: dict, ofertas: list[dict], requisitos_no_cumple: list[
             continue
 
     # Filtrar: solo las que califican (puntaje >= 45)
-    califican = [r for r in resultados if r.get("puntaje", 0) >= 40]
+    califican = [r for r in resultados if r.get("puntaje", 0) >= 50]
 
     # Ordenar de mayor a menor puntaje
     califican.sort(key=lambda x: x.get("puntaje", 0), reverse=True)

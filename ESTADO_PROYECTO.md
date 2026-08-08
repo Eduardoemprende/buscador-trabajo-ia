@@ -1,63 +1,90 @@
-# Estado del Proyecto: App SaaS Búsqueda de Trabajo con IA
+# ESTADO DEL PROYECTO — Buscador de Trabajo con IA
 
-## Descripción General
-Web app SaaS que ayuda al usuario a encontrar trabajo usando IA.
-- El usuario sube su CV (PDF)
-- La app extrae su perfil automáticamente (experiencia, skills, ubicación, años)
-- El usuario define filtros: modalidad (remoto/híbrido), ciudad, requisitos que no cumple
-- La app busca ofertas en Get on Board, LinkedIn, Chiletrabajos, y otras webs con agentes IA en paralelo
-- Cada oferta se evalúa automáticamente contra el perfil del usuario
-- Se devuelven solo las que califican, rankeadas por fit, con explicación
+## URLs importantes
+- **App en producción:** https://buscador-trabajo-ia-lofwra3zhwuxvplwsmimjt.streamlit.app/
+- **GitHub:** https://github.com/Eduardoemprende/buscador-trabajo-ia
 
-## Perfil Técnico del Desarrollador
-- Nunca ha desarrollado una app antes
-- Conocimiento básico de APIs
-- Quiere aprender mientras construye
-- Mac Desktop
+## Stack
+- Python + Streamlit (frontend y lógica)
+- Anthropic API (Claude Opus para extraer CV, Claude Haiku para evaluar ofertas)
+- ScraperAPI (proxy rotativo con JS rendering para portales bloqueados)
+- GitHub → Streamlit Cloud (deploy automático)
 
-## Stack Tecnológico (decidido)
-- **Frontend/UI:** Streamlit (Python, fácil para no desarrolladores)
-- **Backend/IA:** Python + Anthropic API (Claude)
-- **Extracción CV:** PyPDF2 o similar
-- **Scraping/búsqueda:** Agentes IA en paralelo
+## Credenciales (en .env local Y en Streamlit Secrets)
+- ANTHROPIC_API_KEY — en .env y Streamlit Secrets
+- SCRAPER_API_KEY = ab69ca426738cba4be217b51cd4406d1 — en .env y Streamlit Secrets
+- JOOBLE_API_KEY — pendiente: registrar en https://jooble.org/api/about (gratis, agrega LinkedIn)
 
-## Lo que está HECHO ✅
-1. Definición del proyecto y arquitectura general
-2. Instalación del entorno (Python, pip, dependencias)
-3. API Key de Anthropic configurada en archivo `.env`
-4. Archivo `app.py` creado con Streamlit
-5. Extractor de CV funcionando (lee PDF y extrae perfil con Claude)
-6. Buscador de ofertas con API de Adzuna (reemplazó Get on Board que estaba caído)
-7. Evaluador de fit funcionando (compara perfil vs oferta, da % y explica brechas)
-8. App completa corriendo en http://localhost:8501 ✅
-
-## Credenciales en .env
-- ANTHROPIC_API_KEY — API de Claude (extracción CV + evaluación)
-- ADZUNA_APP_ID=2ff10c7c
-- ADZUNA_APP_KEY=8fc13fca21fbed10e9cf5ba89fd4bb03
-
-## Problema resuelto: proxy SSL
-Para correr la app siempre usar:
-```bash
-unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && streamlit run app.py
+## Estructura de archivos
+```
+busqueda de trabajo con IA/
+├── app.py                      # UI principal Streamlit
+├── agents/
+│   ├── cv_extractor.py         # Agente 1: extrae perfil del CV (Claude Opus)
+│   ├── job_scraper.py          # Agente 2: busca ofertas en portales
+│   ├── job_evaluator.py        # Agente 3: evalúa fit (Claude Haiku, threshold 50%)
+│   └── orchestrator.py         # Coordina los 3 agentes
+├── pages/
+│   └── diagnostico_nube.py     # Página de diagnóstico (borrar cuando todo funcione)
+├── requirements.txt
+├── .env                        # Local solamente, NO está en GitHub
+└── ESTADO_PROYECTO.md          # Este archivo
 ```
 
-## App en la nube ☁️
-URL: https://buscador-trabajo-ia-lofwra3zhwuxvplwsmimjt.streamlit.app
-GitHub: https://github.com/Eduardoemprende/buscador-trabajo-ia
+## Fuentes de trabajo — Estado actual (agosto 2026)
 
-## Próximos pasos posibles ⏭️
-- Agregar más fuentes de trabajo con mejor cobertura en Chile (Trabajando.com, Laborum.cl)
-- Mejorar el UI/diseño
-- Guardar historial de búsquedas
-- Agregar login de usuarios para versión SaaS
+### ✅ HTML estático — siempre funcionan
+| Portal | URL de búsqueda | Observaciones |
+|--------|----------------|---------------|
+| **Chiletrabajos.cl** | `/trabajos/{keyword}` | Confirmado 200 OK |
+| **Computrabajo** | `cl.computrabajo.com/trabajo-de-{keyword}` | ⚠️ Dominio correcto: cl.computrabajo.com (no www.computrabajo.cl) |
+| **Indeed.cl** | `cl.indeed.com/jobs?q={keyword}&l=Santiago` | ✅ Nuevo, 15+ ofertas relevantes, HTML estático |
+| **Remotive.com API** | API pública sin key | Empleos remotos globales |
+| **Jobicy.com API** | API pública sin key | Empleos remotos globales |
 
-## Carpeta del Proyecto
-Guardar todos los archivos del proyecto en: Desktop > "Eduardo Claude" > "busqueda de trabajo con IA"
+### ⚠️ JS rendering — requieren ScraperAPI con render=true (5-10 créditos por request)
+| Portal | URL de búsqueda | Estado |
+|--------|----------------|--------|
+| **Laborum.cl** | `/area-{area}/empleos.html` | Bumeran.cl redirige aquí — mismo portal (Jobint) |
+| **Trabajando.cl** | `/empleos?q={keyword}` | URL confirmada, selectores por validar en producción |
+| **Get on Board** | `/jobs/{categoria}` | API cerró (401), usando scrape web con render=true |
+| **BNE** | `bne.gob.cl/ofertas?mostrar=empleo&textoLibre={keyword}&numResultadosPorPagina=20&clasificarYPaginar=true` | Sin login ✅ 84 ofertas de marketing. Página Angular, requiere render=true. Detalle: `/oferta/{id}` |
 
-## Historial de Chats
-- Chat 1: "roadmap paso a paso" — Arquitectura, setup del entorno, API key, primera corrida de app.py
-- Chat 2 (este): Retomando desde aquí
+### ⏳ Pendiente de activar (requiere registro gratuito)
+| Portal | Acción requerida |
+|--------|----------------|
+| **Jooble API** | Registrar en https://jooble.org/api/about → agregar JOOBLE_API_KEY en .env y Streamlit Secrets. Agrega LinkedIn + múltiples portales. |
 
----
-*Actualizar este archivo al final de cada sesión de trabajo*
+### ❌ Descartados definitivamente
+| Portal | Razón |
+|--------|-------|
+| LinkedIn | Requiere login, no scrapeable legalmente |
+| BNE (bne.gob.cl) | Búsqueda por keyword requiere login de usuario |
+| Bumeran.cl | Redirige a Laborum.cl — mismo portal |
+| Indeed (403) | Reemplazado por cl.indeed.com que sí funciona |
+| Adzuna | Solo España/UK/US |
+
+## Cómo funciona ScraperAPI
+- **Sin render=true**: 1 crédito, para HTML estático (Chiletrabajos, Computrabajo, Indeed)
+- **Con render=true**: 5-10 créditos, renderiza JS (Laborum, Trabajando, GOB)
+- Free tier: 5.000 requests/mes
+- URL: `http://api.scraperapi.com?api_key={KEY}&url={url_encoded}&render=true`
+
+## Evaluador de ofertas
+- Modelo: Claude Haiku (velocidad)
+- Threshold: >= 50% de fit para aparecer en resultados (era 40%)
+- Contexto por oferta: 2500 chars de descripción (era 1000)
+
+## Pre-filtro de relevancia
+Antes de evaluar con Claude, el código filtra por keywords del área.
+Para "marketing" solo pasan ofertas con: marketing, digital, SEO, community, publicidad, etc.
+Evita gastar tokens en ofertas irrelevantes.
+
+## Próximos pasos (en orden)
+1. **Hacer commit y deploy** del job_scraper.py actualizado → probar en producción
+2. **Registrar en Jooble API** → agregar JOOBLE_API_KEY → agrega LinkedIn y más fuentes
+3. **Verificar Laborum/Trabajando/GOB** con render=true en producción → ajustar selectores CSS si es necesario
+4. **Borrar diagnostico_nube.py** cuando todo funcione bien
+
+## Último commit
+"Auditoría y refactor completo de fuentes: +Indeed.cl, fix Computrabajo URL, +ScraperAPI render=true para Laborum/Trabajando/GOB, threshold 50%, descripción 2500 chars" — agosto 2026

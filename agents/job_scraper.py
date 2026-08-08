@@ -1,13 +1,28 @@
 """
 AGENTE 2: Buscador de Ofertas
 -----------------------------
-Fuentes activas (confirmadas desde Streamlit Cloud):
-  - Chiletrabajos.cl  ✅
-  - Computrabajo.cl   (intentando)
-  - Laborum.cl        (intentando)
+Fuentes activas:
+  - Chiletrabajos.cl   ✅ HTML estático
+  - Computrabajo.cl    ✅ HTML estático (dominio: cl.computrabajo.com)
+  - Indeed.cl          ✅ HTML estático
+  - Laborum.cl         ⚠️  JS — requiere ScraperAPI render=true
+  - Trabajando.cl      ⚠️  JS — requiere ScraperAPI render=true
+  - Get on Board       ⚠️  JS — requiere ScraperAPI render=true
+  - BNE (bne.gob.cl)   ⚠️  JS Angular — requiere ScraperAPI render=true (sin login, 84+ ofertas)
+  - Remotive.com API   ✅ API pública (empleos remotos globales)
+  - Jobicy.com API     ✅ API pública (empleos remotos globales)
 
-Fuentes descartadas (bloqueadas desde cloud):
-  - Get on Board (404), Trabajando.cl (404), Indeed (403), Adzuna (bloqueado)
+Fuentes descartadas:
+  - LinkedIn       — requiere login, no scrapeable legalmente
+  - BNE            — búsqueda por keyword requiere login
+  - Bumeran.cl     — redirige a Laborum.cl (mismo portal)
+  - Indeed (403)   — usando cl.indeed.com que sí funciona
+  - Adzuna         — bloqueado, solo España/UK/US
+
+Jooble API (pendiente):
+  - Agrega LinkedIn + múltiples portales
+  - Registrarse en https://jooble.org/api/about para obtener key gratuita
+  - Agregar JOOBLE_API_KEY en .env y Streamlit Secrets
 """
 
 import requests
@@ -16,6 +31,7 @@ import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import urllib.parse
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -23,14 +39,7 @@ dotenv_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
-
-def scraper_get(url: str, timeout: int = 20) -> requests.Response:
-    """Hace el request a través de ScraperAPI para evitar bloqueos."""
-    if SCRAPER_API_KEY:
-        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={requests.utils.quote(url, safe='')}"
-        return requests.get(proxy_url, headers=HEADERS, timeout=timeout, verify=False)
-    else:
-        return requests.get(url, headers=HEADERS, timeout=timeout, verify=False)
+JOOBLE_API_KEY  = os.getenv("JOOBLE_API_KEY", "")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -44,8 +53,24 @@ HEADERS = {
 }
 
 
+def scraper_get(url: str, timeout: int = 25, render_js: bool = False) -> requests.Response:
+    """
+    Hace el request a través de ScraperAPI para evitar bloqueos.
+    render_js=True: renderiza JavaScript (necesario para sitios React/Next.js).
+    Costo: render_js=False usa 1 crédito; render_js=True usa 5-10 créditos.
+    """
+    if SCRAPER_API_KEY:
+        encoded = urllib.parse.quote(url, safe="")
+        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={encoded}"
+        if render_js:
+            proxy_url += "&render=true"
+        return requests.get(proxy_url, headers=HEADERS, timeout=timeout, verify=False)
+    else:
+        return requests.get(url, headers=HEADERS, timeout=timeout, verify=False)
+
+
 # ─────────────────────────────────────────
-# CHILETRABAJOS.CL ✅ confirmado funciona
+# CHILETRABAJOS.CL ✅
 # ─────────────────────────────────────────
 
 def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
@@ -53,7 +78,6 @@ def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
     query = cargo.replace(" ", "+")
     query_dash = cargo.replace(" ", "-").lower()
 
-    # Probar primero URL de categoría (más relevante), luego keyword
     urls = [
         f"https://www.chiletrabajos.cl/trabajos/{query_dash}",
         f"https://www.chiletrabajos.cl/encuentra-un-empleo?keyword={query}",
@@ -104,10 +128,10 @@ def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
             "empresa": empresa[:80],
             "ubicacion": ubicacion,
             "modalidad": "Remoto" if es_remoto else "No especificada",
-            "descripcion": texto[:500],
+            "descripcion": texto[:2000],
             "url": href,
             "skills_requeridos": [],
-            "requisitos": texto,
+            "requisitos": texto[:2000],
         })
 
     print(f"[Chiletrabajos] {len(ofertas)} ofertas extraídas")
@@ -115,26 +139,24 @@ def buscar_chiletrabajos(cargo: str, ciudad: str = None) -> list[dict]:
 
 
 # ─────────────────────────────────────────
-# COMPUTRABAJO.CL
+# COMPUTRABAJO ✅ (dominio correcto: cl.computrabajo.com)
 # ─────────────────────────────────────────
 
 def buscar_computrabajo(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
-    query_dash = cargo.replace(" ", "-").lower()
-    query_plus = cargo.replace(" ", "+")
+    keyword_dash = cargo.replace(" ", "-").lower()
+    keyword_plus = urllib.parse.quote(cargo)
 
     urls = [
-        f"https://www.computrabajo.cl/trabajo-de-{query_dash}",
-        f"https://www.computrabajo.cl/ofertas-de-trabajo/?q={query_plus}",
-        f"https://www.computrabajo.cl/empleos-en-chile-de-{query_dash}",
-        f"https://www.computrabajo.cl/ofertas-de-trabajo/oferta-de-trabajo-de-{query_dash}",
+        f"https://cl.computrabajo.com/trabajo-de-{keyword_dash}",
+        f"https://cl.computrabajo.com/ofertas-de-trabajo/?q={keyword_plus}",
     ]
 
     resp = None
     for url in urls:
         try:
-            r = scraper_get(url, timeout=20)
-            print(f"[Computrabajo] {url} → {r.status_code}")
+            r = scraper_get(url, timeout=25)
+            print(f"[Computrabajo] {url} → {r.status_code} | {len(r.text)} chars")
             if r.status_code == 200 and len(r.text) > 5000:
                 resp = r
                 break
@@ -142,105 +164,515 @@ def buscar_computrabajo(cargo: str, ciudad: str = None) -> list[dict]:
             print(f"[Computrabajo] Error: {e}")
 
     if not resp:
-        print("[Computrabajo] Sin URL válida")
+        print("[Computrabajo] Sin respuesta válida")
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    tarjetas = soup.select("article.box_offer, article[data-r], .offerItem, article")
+    tarjetas = soup.select("article.box_offer")
+    print(f"[Computrabajo] {len(tarjetas)} tarjetas encontradas")
 
-    for tarjeta in tarjetas[:15]:
-        titulo_el = tarjeta.select_one("h2, h3, .title_offer, [class*='title']")
-        link_el = tarjeta.select_one("a[href]")
-        empresa_el = tarjeta.select_one(".name_company, [class*='company'], [class*='empresa']")
-        ubicacion_el = tarjeta.select_one(".city, [class*='location'], [class*='ciudad']")
+    for tarjeta in tarjetas[:20]:
+        titulo_el = tarjeta.select_one("h2 a")
         if not titulo_el:
             continue
         titulo = titulo_el.get_text(strip=True)
         if not titulo or len(titulo) < 5:
             continue
-        href = link_el.get("href", "") if link_el else ""
+
+        href = titulo_el.get("href", "")
         if href and not href.startswith("http"):
-            href = "https://www.computrabajo.cl" + href
+            href = "https://cl.computrabajo.com" + href.split("#")[0]
+
+        empresa_el = tarjeta.select_one("p.fc_base a, [class*='company'] a, p a[href*='/empresas/']")
+        empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+
+        ubicacion_el = tarjeta.select_one("p.fc_base span, [class*='location'], span[class*='city']")
+        ubicacion = ubicacion_el.get_text(strip=True) if ubicacion_el else (ciudad or "Chile")
+
         texto = tarjeta.get_text(separator=" ", strip=True)
+        es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo", "trabajo desde casa"])
+
         ofertas.append({
             "fuente": "Computrabajo",
             "titulo": titulo[:100],
-            "empresa": empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta",
-            "ubicacion": ubicacion_el.get_text(strip=True) if ubicacion_el else "Chile",
-            "modalidad": "Remoto" if "remoto" in texto.lower() else "No especificada",
-            "descripcion": texto[:500],
+            "empresa": empresa[:80],
+            "ubicacion": ubicacion,
+            "modalidad": "Remoto" if es_remoto else "No especificada",
+            "descripcion": texto[:2000],
             "url": href,
             "skills_requeridos": [],
-            "requisitos": texto,
+            "requisitos": texto[:2000],
         })
 
-    print(f"[Computrabajo] {len(ofertas)} ofertas")
+    print(f"[Computrabajo] {len(ofertas)} ofertas extraídas")
     return ofertas
 
 
 # ─────────────────────────────────────────
-# LABORUM.CL
+# INDEED.CL ✅ (nuevo — HTML estático)
 # ─────────────────────────────────────────
 
-def buscar_laborum(cargo: str, ciudad: str = None) -> list[dict]:
+def buscar_indeed(cargo: str, ciudad: str = None) -> list[dict]:
     ofertas = []
-    query = cargo.replace(" ", "-").lower()
-    query_plus = cargo.replace(" ", "%20")
+    keyword = urllib.parse.quote(cargo)
+    ciudad_query = urllib.parse.quote(ciudad or "Santiago de Chile")
+    url = f"https://cl.indeed.com/jobs?q={keyword}&l={ciudad_query}"
+
+    try:
+        r = scraper_get(url, timeout=25)
+        print(f"[Indeed] {url} → {r.status_code} | {len(r.text)} chars")
+        if r.status_code != 200 or len(r.text) < 3000:
+            print("[Indeed] Sin respuesta válida")
+            return []
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        # Selector principal: elementos con data-jk (ID único de Indeed)
+        tarjetas = soup.select("[data-jk]")
+        # Fallback: cards de la lista de resultados
+        if not tarjetas:
+            tarjetas = soup.select(".job_seen_beacon, .result")
+        print(f"[Indeed] {len(tarjetas)} tarjetas encontradas")
+
+        for tarjeta in tarjetas[:20]:
+            # Título
+            titulo_el = tarjeta.select_one("h2 a span[title], h2 a span, [class*='jobTitle'] span")
+            if not titulo_el:
+                continue
+            titulo = titulo_el.get("title") or titulo_el.get_text(strip=True)
+            if not titulo or len(titulo) < 5:
+                continue
+
+            # URL
+            link_el = tarjeta.select_one("h2 a")
+            href = ""
+            if link_el:
+                raw_href = link_el.get("href", "")
+                href = "https://cl.indeed.com" + raw_href if raw_href.startswith("/") else raw_href
+
+            # Empresa
+            empresa_el = tarjeta.select_one(
+                "[data-testid='company-name'], [class*='companyName'], span[class*='company']"
+            )
+            empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+
+            # Ubicación
+            ubicacion_el = tarjeta.select_one(
+                "[data-testid='text-location'], [class*='companyLocation'], div[class*='location']"
+            )
+            ubicacion = ubicacion_el.get_text(strip=True) if ubicacion_el else (ciudad or "Chile")
+
+            # Descripción
+            desc_el = tarjeta.select_one(
+                "[data-testid='job-snippet'], [class*='snippet'], div[class*='summary']"
+            )
+            texto = tarjeta.get_text(separator=" ", strip=True)
+            descripcion = desc_el.get_text(strip=True) if desc_el else texto[:500]
+
+            es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo", "híbrido", "hybrid"])
+
+            ofertas.append({
+                "fuente": "Indeed",
+                "titulo": titulo[:100],
+                "empresa": empresa[:80],
+                "ubicacion": ubicacion,
+                "modalidad": "Remoto" if es_remoto else "No especificada",
+                "descripcion": descripcion[:2000],
+                "url": href,
+                "skills_requeridos": [],
+                "requisitos": texto[:2000],
+            })
+
+    except Exception as e:
+        print(f"[Indeed] Error: {e}")
+
+    print(f"[Indeed] {len(ofertas)} ofertas extraídas")
+    return ofertas
+
+
+# ─────────────────────────────────────────
+# LABORUM.CL ⚠️ JS — ScraperAPI render=true
+# ─────────────────────────────────────────
+
+LABORUM_AREAS = {
+    "marketing": "marketing-y-publicidad",
+    "digital": "marketing-y-publicidad",
+    "diseño": "diseno",
+    "data": "tecnologia-sistemas-y-telecomunicaciones",
+    "software": "tecnologia-sistemas-y-telecomunicaciones",
+    "ventas": "comercial-ventas-y-negocios",
+    "rrhh": "recursos-humanos-y-capacitacion",
+    "finanzas": "administracion-contabilidad-y-finanzas",
+    "contabilidad": "administracion-contabilidad-y-finanzas",
+}
+
+def buscar_laborum(cargo: str, ciudad: str = None) -> list[dict]:
+    if not SCRAPER_API_KEY:
+        print("[Laborum] Sin ScraperAPI key — omitiendo")
+        return []
+
+    ofertas = []
+    cargo_lower = cargo.lower()
+    area = next((v for k, v in LABORUM_AREAS.items() if k in cargo_lower), "marketing-y-publicidad")
 
     urls = [
-        f"https://www.laborum.cl/empleos-busqueda-{query}.html",
-        f"https://www.laborum.cl/empleos?q={query_plus}",
+        f"https://www.laborum.cl/area-{area}/empleos.html",
+        f"https://www.laborum.cl/empleos.html",
     ]
 
     resp = None
     for url in urls:
         try:
-            r = scraper_get(url, timeout=20)
-            print(f"[Laborum] {url} → {r.status_code}")
-            if r.status_code == 200 and len(r.text) > 3000:
+            r = scraper_get(url, timeout=35, render_js=True)
+            print(f"[Laborum] {url} → {r.status_code} | {len(r.text)} chars")
+            if r.status_code == 200 and len(r.text) > 5000:
                 resp = r
                 break
         except Exception as e:
             print(f"[Laborum] Error: {e}")
 
     if not resp:
-        print("[Laborum] Sin URL válida")
+        print("[Laborum] Sin respuesta válida")
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    tarjetas = soup.select("article.aviso, .aviso, [class*='aviso'], [class*='job-card'], li.offer")
 
-    for tarjeta in tarjetas[:15]:
-        titulo_el = tarjeta.select_one("h2, h3, .title, [class*='title'], a[href*='/empleos/']")
-        link_el = tarjeta.select_one("a[href*='/empleos/'], a[href*='/aviso/'], a[href]")
-        empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], .empresa")
+    # Laborum usa CSS-in-JS; buscamos por estructura semántica
+    tarjetas = soup.select(
+        "article, [class*='jobCard'], [class*='aviso'], [class*='job-card'], "
+        "li[class*='offer'], div[class*='offer-item']"
+    )
+    print(f"[Laborum] {len(tarjetas)} tarjetas encontradas")
+
+    for tarjeta in tarjetas[:20]:
+        titulo_el = tarjeta.select_one("h2, h3, a[href*='/empleo/'], a[href*='/aviso/']")
         if not titulo_el:
             continue
         titulo = titulo_el.get_text(strip=True)
         if not titulo or len(titulo) < 5:
             continue
-        href = link_el.get("href", "") if link_el else ""
-        if href and not href.startswith("http"):
-            href = "https://www.laborum.cl" + href
+
+        link_el = tarjeta.select_one("a[href*='/empleo/'], a[href*='/aviso/'], a[href]")
+        href = ""
+        if link_el:
+            raw = link_el.get("href", "")
+            href = "https://www.laborum.cl" + raw if raw.startswith("/") else raw
+
+        empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], span[class*='name']")
+        empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+
         texto = tarjeta.get_text(separator=" ", strip=True)
+        es_remoto = any(w in texto.lower() for w in ["remoto", "teletrabajo"])
+
         ofertas.append({
             "fuente": "Laborum",
             "titulo": titulo[:100],
-            "empresa": empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta",
-            "ubicacion": "Chile",
-            "modalidad": "Remoto" if "remoto" in texto.lower() else "No especificada",
-            "descripcion": texto[:500],
+            "empresa": empresa[:80],
+            "ubicacion": ciudad or "Chile",
+            "modalidad": "Remoto" if es_remoto else "No especificada",
+            "descripcion": texto[:2000],
             "url": href,
             "skills_requeridos": [],
-            "requisitos": texto,
+            "requisitos": texto[:2000],
         })
 
-    print(f"[Laborum] {len(ofertas)} ofertas")
+    print(f"[Laborum] {len(ofertas)} ofertas extraídas")
     return ofertas
 
 
 # ─────────────────────────────────────────
-# REMOTIVE.COM — API gratuita, sin key, empleos remotos
+# TRABAJANDO.CL ⚠️ JS — ScraperAPI render=true
+# ─────────────────────────────────────────
+
+def buscar_trabajando(cargo: str, ciudad: str = None) -> list[dict]:
+    if not SCRAPER_API_KEY:
+        print("[Trabajando] Sin ScraperAPI key — omitiendo")
+        return []
+
+    ofertas = []
+    keyword = urllib.parse.quote(cargo)
+
+    urls = [
+        f"https://www.trabajando.cl/empleos?q={keyword}",
+        f"https://www.trabajando.cl/empleo/buscar?q={keyword}",
+        f"https://www.trabajando.cl/empleos/{cargo.replace(' ', '-').lower()}",
+    ]
+
+    resp = None
+    for url in urls:
+        try:
+            r = scraper_get(url, timeout=35, render_js=True)
+            print(f"[Trabajando] {url} → {r.status_code} | {len(r.text)} chars")
+            if r.status_code == 200 and len(r.text) > 5000:
+                resp = r
+                break
+        except Exception as e:
+            print(f"[Trabajando] Error: {e}")
+
+    if not resp:
+        print("[Trabajando] Sin respuesta válida")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tarjetas = soup.select(
+        "article, [class*='job-card'], [class*='jobcard'], [class*='oferta'], "
+        "div[class*='aviso'], li[class*='empleo']"
+    )
+    print(f"[Trabajando] {len(tarjetas)} tarjetas encontradas")
+
+    for tarjeta in tarjetas[:20]:
+        titulo_el = tarjeta.select_one("h2, h3, a[href*='/empleo/']")
+        if not titulo_el:
+            continue
+        titulo = titulo_el.get_text(strip=True)
+        if not titulo or len(titulo) < 5:
+            continue
+
+        link_el = tarjeta.select_one("a[href]")
+        href = ""
+        if link_el:
+            raw = link_el.get("href", "")
+            href = "https://www.trabajando.cl" + raw if raw.startswith("/") else raw
+
+        empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company']")
+        empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+
+        texto = tarjeta.get_text(separator=" ", strip=True)
+        es_remoto = any(w in texto.lower() for w in ["remoto", "teletrabajo"])
+
+        ofertas.append({
+            "fuente": "Trabajando",
+            "titulo": titulo[:100],
+            "empresa": empresa[:80],
+            "ubicacion": ciudad or "Chile",
+            "modalidad": "Remoto" if es_remoto else "No especificada",
+            "descripcion": texto[:2000],
+            "url": href,
+            "skills_requeridos": [],
+            "requisitos": texto[:2000],
+        })
+
+    print(f"[Trabajando] {len(ofertas)} ofertas extraídas")
+    return ofertas
+
+
+# ─────────────────────────────────────────
+# GET ON BOARD ⚠️ JS — ScraperAPI render=true
+# ─────────────────────────────────────────
+
+GOB_CATEGORIAS = {
+    "marketing": "digital-marketing",
+    "digital": "digital-marketing",
+    "publicidad": "advertising-media",
+    "diseño": "design-ux",
+    "ux": "design-ux",
+    "datos": "data-science-analytics",
+    "data": "data-science-analytics",
+    "producto": "innovation-agile",
+    "ventas": "sales",
+    "software": "programming",
+    "developer": "programming",
+}
+
+def buscar_getonboard(cargo: str) -> list[dict]:
+    if not SCRAPER_API_KEY:
+        print("[GetOnBoard] Sin ScraperAPI key — omitiendo")
+        return []
+
+    ofertas = []
+    cargo_lower = cargo.lower()
+    categoria = next((v for k, v in GOB_CATEGORIAS.items() if k in cargo_lower), "digital-marketing")
+    keyword = urllib.parse.quote(cargo)
+
+    urls = [
+        f"https://www.getonbrd.com/jobs/{categoria}",
+        f"https://www.getonbrd.com/jobs?query={keyword}",
+        f"https://www.getonbrd.com/jobs",
+    ]
+
+    resp = None
+    for url in urls:
+        try:
+            r = scraper_get(url, timeout=35, render_js=True)
+            print(f"[GetOnBoard] {url} → {r.status_code} | {len(r.text)} chars")
+            if r.status_code == 200 and len(r.text) > 5000:
+                resp = r
+                break
+        except Exception as e:
+            print(f"[GetOnBoard] Error: {e}")
+
+    if not resp:
+        print("[GetOnBoard] Sin respuesta válida")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tarjetas = soup.select(
+        "article, [class*='job-card'], [class*='JobCard'], [class*='job_item'], "
+        "li[class*='job'], div[class*='position']"
+    )
+    print(f"[GetOnBoard] {len(tarjetas)} tarjetas encontradas")
+
+    for tarjeta in tarjetas[:20]:
+        titulo_el = tarjeta.select_one("h2, h3, [class*='title'], a[href*='/jobs/']")
+        if not titulo_el:
+            continue
+        titulo = titulo_el.get_text(strip=True)
+        if not titulo or len(titulo) < 5:
+            continue
+
+        link_el = tarjeta.select_one("a[href*='/jobs/'], a[href]")
+        href = ""
+        if link_el:
+            raw = link_el.get("href", "")
+            href = "https://www.getonbrd.com" + raw if raw.startswith("/") else raw
+
+        empresa_el = tarjeta.select_one("[class*='company'], [class*='empresa'], span[class*='name']")
+        empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+
+        texto = tarjeta.get_text(separator=" ", strip=True)
+        es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo"])
+
+        ofertas.append({
+            "fuente": "Get on Board",
+            "titulo": titulo[:100],
+            "empresa": empresa[:80],
+            "ubicacion": "Chile",
+            "modalidad": "Remoto" if es_remoto else "No especificada",
+            "descripcion": texto[:2000],
+            "url": href,
+            "skills_requeridos": [],
+            "requisitos": texto[:2000],
+        })
+
+    print(f"[GetOnBoard] {len(ofertas)} ofertas extraídas")
+    return ofertas
+
+
+# ─────────────────────────────────────────
+# BNE — Bolsa Nacional de Empleo ⚠️ JS — ScraperAPI render=true
+# Sin login. URL: bne.gob.cl/ofertas?mostrar=empleo&textoLibre={keyword}
+# Detalle de oferta: bne.gob.cl/oferta/{id}
+# ─────────────────────────────────────────
+
+def buscar_bne(cargo: str, ciudad: str = None) -> list[dict]:
+    if not SCRAPER_API_KEY:
+        print("[BNE] Sin ScraperAPI key — omitiendo")
+        return []
+
+    ofertas = []
+    keyword = urllib.parse.quote(cargo)
+    url = (
+        f"https://bne.gob.cl/ofertas?mostrar=empleo"
+        f"&textoLibre={keyword}"
+        f"&numResultadosPorPagina=20"
+        f"&clasificarYPaginar=true"
+    )
+
+    try:
+        r = scraper_get(url, timeout=40, render_js=True)
+        print(f"[BNE] {url} → {r.status_code} | {len(r.text)} chars")
+        if r.status_code != 200 or len(r.text) < 3000:
+            print("[BNE] Sin respuesta válida")
+            return []
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        tarjetas = soup.select("article")
+        print(f"[BNE] {len(tarjetas)} tarjetas encontradas")
+
+        for tarjeta in tarjetas[:20]:
+            # Título y link: el anchor dentro del article
+            link_el = tarjeta.select_one("a[href*='/oferta/']")
+            if not link_el:
+                link_el = tarjeta.select_one("a[href]")
+            if not link_el:
+                continue
+            titulo = link_el.get_text(strip=True)
+            if not titulo or len(titulo) < 5:
+                continue
+
+            href = link_el.get("href", "")
+            if href.startswith("/"):
+                href = "https://bne.gob.cl" + href
+
+            # Empresa y ubicación: texto en párrafos y spans
+            textos = [el.get_text(strip=True) for el in tarjeta.select("p, span, div") if el.get_text(strip=True)]
+            empresa = "Ver en oferta"
+            ubicacion_raw = ciudad or "Chile"
+
+            for t in textos:
+                # La empresa suele estar en mayúsculas (ej: "OMIL PROVIDENCIA")
+                if t.isupper() and len(t) > 5 and empresa == "Ver en oferta":
+                    empresa = t[:80]
+                # Ubicación tiene formato "Región - Ciudad"
+                if " - " in t and any(reg in t for reg in ["Metropolitana", "Valparaíso", "Antofagasta", "Los Lagos", "Los Ríos", "Biobío", "Araucanía"]):
+                    ubicacion_raw = t
+
+            texto = tarjeta.get_text(separator=" ", strip=True)
+            es_remoto = any(w in texto.lower() for w in ["remoto", "teletrabajo", "trabajo a distancia"])
+
+            ofertas.append({
+                "fuente": "BNE (Bolsa Nacional de Empleo)",
+                "titulo": titulo[:100],
+                "empresa": empresa[:80],
+                "ubicacion": ubicacion_raw,
+                "modalidad": "Remoto" if es_remoto else "No especificada",
+                "descripcion": texto[:2000],
+                "url": href,
+                "skills_requeridos": [],
+                "requisitos": texto[:2000],
+            })
+
+    except Exception as e:
+        print(f"[BNE] Error: {e}")
+
+    print(f"[BNE] {len(ofertas)} ofertas extraídas")
+    return ofertas
+
+
+# ─────────────────────────────────────────
+# JOOBLE API (pendiente — agrega LinkedIn)
+# Para activar: registrar en https://jooble.org/api/about
+# Agregar JOOBLE_API_KEY en .env y Streamlit Secrets
+# ─────────────────────────────────────────
+
+def buscar_jooble(cargo: str, ciudad: str = None) -> list[dict]:
+    if not JOOBLE_API_KEY:
+        print("[Jooble] Sin API key — omitiendo. Registrar en https://jooble.org/api/about")
+        return []
+
+    url = f"https://jooble.org/api/{JOOBLE_API_KEY}"
+    payload = {
+        "keywords": cargo,
+        "location": ciudad or "Chile",
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        print(f"[Jooble] Status: {resp.status_code}")
+        if resp.status_code != 200:
+            return []
+        jobs = resp.json().get("jobs", [])
+        print(f"[Jooble] {len(jobs)} ofertas")
+        ofertas = []
+        for job in jobs[:20]:
+            desc = BeautifulSoup(job.get("snippet", ""), "html.parser").get_text(strip=True)
+            ofertas.append({
+                "fuente": "Jooble (LinkedIn/Multi)",
+                "titulo": job.get("title", "")[:100],
+                "empresa": job.get("company", "Ver en oferta")[:80],
+                "ubicacion": job.get("location", ciudad or "Chile"),
+                "modalidad": "Remoto" if "remoto" in desc.lower() or "remote" in desc.lower() else "No especificada",
+                "descripcion": desc[:2000],
+                "url": job.get("link", ""),
+                "skills_requeridos": [],
+                "requisitos": desc[:2000],
+            })
+        return ofertas
+    except Exception as e:
+        print(f"[Jooble] Error: {e}")
+        return []
+
+
+# ─────────────────────────────────────────
+# REMOTIVE.COM — API gratuita, empleos remotos
 # ─────────────────────────────────────────
 
 REMOTIVE_CATEGORIAS = {
@@ -252,18 +684,12 @@ REMOTIVE_CATEGORIAS = {
     "ventas": "sales",
     "rrhh": "hr",
     "finanzas": "finance",
-    "default": "marketing",
 }
 
 def buscar_remotive(cargo: str) -> list[dict]:
     cargo_lower = cargo.lower()
-    categoria = "marketing"
-    for key, val in REMOTIVE_CATEGORIAS.items():
-        if key in cargo_lower:
-            categoria = val
-            break
-
-    url = f"https://remotive.com/api/remote-jobs?category={categoria}&limit=30"
+    categoria = next((v for k, v in REMOTIVE_CATEGORIAS.items() if k in cargo_lower), "marketing")
+    url = f"https://remotive.com/api/remote-jobs?category={categoria}&limit=20"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=12, verify=False)
         print(f"[Remotive] Status: {resp.status_code}")
@@ -273,7 +699,7 @@ def buscar_remotive(cargo: str) -> list[dict]:
         print(f"[Remotive] {len(jobs)} ofertas")
         ofertas = []
         for job in jobs:
-            desc = BeautifulSoup(job.get("description", ""), "html.parser").get_text(separator=" ", strip=True)[:600]
+            desc = BeautifulSoup(job.get("description", ""), "html.parser").get_text(separator=" ", strip=True)[:2000]
             ofertas.append({
                 "fuente": "Remotive (Remoto)",
                 "titulo": job.get("title", "")[:100],
@@ -292,11 +718,10 @@ def buscar_remotive(cargo: str) -> list[dict]:
 
 
 # ─────────────────────────────────────────
-# JOBICY.COM — API gratuita, sin key, empleos remotos
+# JOBICY.COM — API gratuita, empleos remotos
 # ─────────────────────────────────────────
 
 def buscar_jobicy(cargo: str) -> list[dict]:
-    # Jobicy tiene categorías fijas
     cargo_lower = cargo.lower()
     tag = "marketing"
     if "diseño" in cargo_lower or "design" in cargo_lower:
@@ -316,7 +741,7 @@ def buscar_jobicy(cargo: str) -> list[dict]:
         print(f"[Jobicy] {len(jobs)} ofertas")
         ofertas = []
         for job in jobs:
-            desc = BeautifulSoup(job.get("jobDescription", ""), "html.parser").get_text(separator=" ", strip=True)[:600]
+            desc = BeautifulSoup(job.get("jobDescription", ""), "html.parser").get_text(separator=" ", strip=True)[:2000]
             ofertas.append({
                 "fuente": "Jobicy (Remoto)",
                 "titulo": job.get("jobTitle", "")[:100],
@@ -341,14 +766,13 @@ def buscar_jobicy(cargo: str) -> list[dict]:
 KEYWORDS_RELEVANCIA = {
     "marketing": ["marketing", "digital", "contenido", "community manager", "seo", "sem",
                   "comunicacion", "publicidad", "growth", "redes sociales", "campañ", "brand",
-                  "ecommerce", "crm", "email", "inbound", "performance", "pauta"],
+                  "ecommerce", "crm", "email", "inbound", "performance", "pauta", "ads"],
     "ventas": ["venta", "vendedor", "comercial", "sales", "ejecutivo comercial", "prospect"],
     "diseño": ["diseño", "design", "ux", "ui", "grafico", "creativo", "visual", "multimedia"],
     "data": ["data", "analista", "analytics", "business intelligence", "sql", "machine learning"],
     "producto": ["producto", "product manager", "product owner", "roadmap"],
     "rrhh": ["recursos humanos", "reclutamiento", "talent", "people", "gestión de personas"],
     "finanzas": ["finanz", "contab", "contador", "control de gestion", "tesorero"],
-    "enfermeria": ["enferm", "salud", "clinica", "hospital", "paciente", "medic", "nurse"],
     "ingenieria": ["ingeniero", "ingenieria", "software", "developer", "programador", "devops"],
     "administracion": ["administraci", "admin", "secretaria", "asistente", "back office"],
 }
@@ -387,13 +811,28 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
         cargo = "marketing"
 
     print(f"\n[Buscador] '{cargo}' | modalidad={modalidad} | ciudad={ciudad}")
+    print(f"[Buscador] ScraperAPI: {'✅ activo' if SCRAPER_API_KEY else '❌ sin key'}")
+    print(f"[Buscador] Jooble API: {'✅ activo' if JOOBLE_API_KEY else '⚠️ sin key (registrar en jooble.org/api/about)'}")
 
     todas = []
+
+    # Fuentes HTML estático (siempre activas)
     todas.extend(buscar_chiletrabajos(cargo, ciudad))
     todas.extend(buscar_computrabajo(cargo, ciudad))
+    todas.extend(buscar_indeed(cargo, ciudad))
+
+    # Fuentes JS (requieren ScraperAPI render=true)
     todas.extend(buscar_laborum(cargo, ciudad))
+    todas.extend(buscar_trabajando(cargo, ciudad))
+    todas.extend(buscar_getonboard(cargo))
+    todas.extend(buscar_bne(cargo, ciudad))
+
+    # APIs de empleos remotos (siempre activas)
     todas.extend(buscar_remotive(cargo))
     todas.extend(buscar_jobicy(cargo))
+
+    # Jooble (LinkedIn + multi-portales) si tiene key
+    todas.extend(buscar_jooble(cargo, ciudad))
 
     # Deduplicar por URL
     vistas = set()
@@ -410,7 +849,12 @@ def buscar_ofertas(cargo: str, modalidad: str = None, ciudad: str = None, max_re
 
     # Pre-filtro de relevancia
     relevantes = [o for o in unicas if _oferta_es_relevante(o, cargo)]
-    print(f"[Buscador] {len(unicas)} únicas → {len(relevantes)} relevantes para '{cargo}'")
+    print(f"\n[Buscador] {len(unicas)} únicas → {len(relevantes)} relevantes para '{cargo}'")
+    fuentes = {}
+    for o in relevantes:
+        f = o.get("fuente", "?")
+        fuentes[f] = fuentes.get(f, 0) + 1
+    print(f"[Buscador] Por fuente: {fuentes}")
 
     return relevantes[:max_resultados]
 
@@ -419,5 +863,5 @@ if __name__ == "__main__":
     resultados = buscar_ofertas("marketing digital")
     print(f"\nTotal: {len(resultados)} ofertas\n")
     for i, o in enumerate(resultados, 1):
-        print(f"{i}. {o['titulo']} — {o['empresa']} ({o['fuente']})")
+        print(f"{i}. [{o['fuente']}] {o['titulo']} — {o['empresa']}")
         print(f"   {o['url']}\n")
