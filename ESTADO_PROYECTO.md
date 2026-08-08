@@ -42,11 +42,11 @@ busqueda de trabajo con IA/
 | **Remotive.com API** | API pública sin key | Empleos remotos globales |
 | **Jobicy.com API** | API pública sin key | Empleos remotos globales |
 
-### ⚠️ JS rendering — requieren ScraperAPI con render=true (5-10 créditos por request)
-| Portal | URL de búsqueda | Estado |
+### ⚠️ Requieren JS / validación en producción
+| Portal | URL correcta | Estado |
 |--------|----------------|--------|
-| **Laborum.cl** | `/area-{area}/empleos.html` | Bumeran.cl redirige aquí — mismo portal (Jobint) |
-| **Trabajando.cl** | `/empleos?q={keyword}` | URL confirmada, selectores por validar en producción |
+| **Laborum.cl** | `/empleos-area-{area}.html` | CSR puro. ScraperAPI bloqueado ("blocked-by-allowlist"). Código intenta request directo primero → **probar si funciona desde Streamlit Cloud**. URL área marketing: `/empleos-area-marketing-y-publicidad.html` ✅ confirmada |
+| **Trabajando.cl** | `/empleos?q={keyword}` | URL confirmada, selectores y acceso por validar en producción |
 | **Get on Board** | `/jobs/{categoria}` | API cerró (401), usando scrape web con render=true |
 | **BNE** | `bne.gob.cl/ofertas?mostrar=empleo&textoLibre={keyword}&numResultadosPorPagina=20&clasificarYPaginar=true` | Sin login ✅ 84 ofertas de marketing. Página Angular, requiere render=true. Detalle: `/oferta/{id}` |
 
@@ -81,10 +81,18 @@ Para "marketing" solo pasan ofertas con: marketing, digital, SEO, community, pub
 Evita gastar tokens en ofertas irrelevantes.
 
 ## Próximos pasos (en orden)
-1. **Hacer commit y deploy** del job_scraper.py actualizado → probar en producción
-2. **Registrar en Jooble API** → agregar JOOBLE_API_KEY → agrega LinkedIn y más fuentes
-3. **Verificar Laborum/Trabajando/GOB** con render=true en producción → ajustar selectores CSS si es necesario
-4. **Borrar diagnostico_nube.py** cuando todo funcione bien
+1. **Commit y deploy** del job_scraper.py (Laborum refactorizado) → verificar en producción si Streamlit Cloud puede acceder a Laborum directamente
+2. **Si Laborum sigue fallando en producción**: evaluar upgrade ScraperAPI o switch a Zenrows/Bright Data que sí soportan Laborum
+3. **Trabajando.cl y GOB**: mismo proceso — verificar acceso desde Streamlit Cloud, ajustar si es necesario
+4. **Registrar en Jooble API** → agregar JOOBLE_API_KEY → agrega LinkedIn y más fuentes
+5. **Borrar diagnostico_nube.py** cuando todo funcione bien
+
+## Hallazgos técnicos importantes (agosto 2026)
+- **Laborum URL correcta**: `/empleos-area-{area}.html` (la antigua `/area-{area}/empleos.html` da 404)
+- **Laborum es CSR**: HTML crudo no tiene jobs. JS los inyecta. JSON-LD generado por React.
+- **ScraperAPI bloquea Laborum**: "blocked-by-allowlist" — problema de plan, no de código
+- **Sandbox de desarrollo**: proxy local bloquea Laborum y otras URLs — no refleja comportamiento de Streamlit Cloud
+- **Selectores DOM de Laborum**: `a[href*="/empleos/"]` → `.parent` → `h2`=título, `h3[1]`=empresa, `h3[2]`=ubicación, `h3[3]`=modalidad ✅ confirmados
 
 ## Último commit
-"Auditoría y refactor completo de fuentes: +Indeed.cl, fix Computrabajo URL, +ScraperAPI render=true para Laborum/Trabajando/GOB, threshold 50%, descripción 2500 chars" — agosto 2026
+"Laborum refactor: URL /empleos-area-{area}.html, request directo primero + ScraperAPI fallback, JSON-LD parsing" — agosto 2026

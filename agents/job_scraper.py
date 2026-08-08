@@ -213,77 +213,98 @@ def buscar_computrabajo(cargo: str, ciudad: str = None) -> list[dict]:
 # ─────────────────────────────────────────
 
 def buscar_indeed(cargo: str, ciudad: str = None) -> list[dict]:
+    """
+    Indeed Chile — HTML semi-estático.
+    Intenta 3 estrategias distintas para evitar detección de bots.
+    """
     ofertas = []
     keyword = urllib.parse.quote(cargo)
     ciudad_query = urllib.parse.quote(ciudad or "Santiago de Chile")
-    url = f"https://cl.indeed.com/jobs?q={keyword}&l={ciudad_query}"
 
-    try:
-        r = scraper_get(url, timeout=25)
-        print(f"[Indeed] {url} → {r.status_code} | {len(r.text)} chars")
-        if r.status_code != 200 or len(r.text) < 3000:
-            print("[Indeed] Sin respuesta válida")
-            return []
+    urls = [
+        f"https://cl.indeed.com/jobs?q={keyword}&l={ciudad_query}",
+        f"https://cl.indeed.com/jobs?q={keyword}&l=Santiago%2C+Regi%C3%B3n+Metropolitana",
+        f"https://cl.indeed.com/empleos?q={keyword}&l={ciudad_query}",
+    ]
 
-        soup = BeautifulSoup(r.text, "html.parser")
-        # Selector principal: elementos con data-jk (ID único de Indeed)
-        tarjetas = soup.select("[data-jk]")
-        # Fallback: cards de la lista de resultados
-        if not tarjetas:
-            tarjetas = soup.select(".job_seen_beacon, .result")
-        print(f"[Indeed] {len(tarjetas)} tarjetas encontradas")
+    resp = None
+    for url in urls:
+        try:
+            r = scraper_get(url, timeout=25)
+            print(f"[Indeed] {url} → {r.status_code} | {len(r.text)} chars")
+            # Indeed a veces devuelve 200 pero con página de captcha
+            if r.status_code == 200 and len(r.text) > 10000 and "jobsearch" in r.text.lower():
+                resp = r
+                break
+            elif r.status_code == 200 and len(r.text) > 10000:
+                resp = r
+                break
+        except Exception as e:
+            print(f"[Indeed] Error en {url}: {e}")
 
-        for tarjeta in tarjetas[:20]:
-            # Título
-            titulo_el = tarjeta.select_one("h2 a span[title], h2 a span, [class*='jobTitle'] span")
-            if not titulo_el:
-                continue
-            titulo = titulo_el.get("title") or titulo_el.get_text(strip=True)
-            if not titulo or len(titulo) < 5:
-                continue
+    if not resp:
+        print("[Indeed] Sin respuesta válida — Indeed puede estar bloqueando ScraperAPI")
+        return []
 
-            # URL
-            link_el = tarjeta.select_one("h2 a")
-            href = ""
-            if link_el:
-                raw_href = link_el.get("href", "")
-                href = "https://cl.indeed.com" + raw_href if raw_href.startswith("/") else raw_href
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Empresa
-            empresa_el = tarjeta.select_one(
-                "[data-testid='company-name'], [class*='companyName'], span[class*='company']"
-            )
-            empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+    # Estrategia 1: data-jk (atributo estable de Indeed)
+    tarjetas = soup.select("[data-jk]")
 
-            # Ubicación
-            ubicacion_el = tarjeta.select_one(
-                "[data-testid='text-location'], [class*='companyLocation'], div[class*='location']"
-            )
-            ubicacion = ubicacion_el.get_text(strip=True) if ubicacion_el else (ciudad or "Chile")
+    # Estrategia 2: clases de resultado conocidas
+    if not tarjetas:
+        tarjetas = soup.select(".job_seen_beacon, .result, .tapItem")
 
-            # Descripción
-            desc_el = tarjeta.select_one(
-                "[data-testid='job-snippet'], [class*='snippet'], div[class*='summary']"
-            )
-            texto = tarjeta.get_text(separator=" ", strip=True)
-            descripcion = desc_el.get_text(strip=True) if desc_el else texto[:500]
+    # Estrategia 3: cualquier li con link a /pagepixels o /rc/clk (links internos de Indeed)
+    if not tarjetas:
+        tarjetas = soup.select("li:has(a[href*='/rc/clk']), li:has(a[href*='pagepixels'])")
 
-            es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo", "híbrido", "hybrid"])
+    print(f"[Indeed] {len(tarjetas)} tarjetas encontradas")
 
-            ofertas.append({
-                "fuente": "Indeed",
-                "titulo": titulo[:100],
-                "empresa": empresa[:80],
-                "ubicacion": ubicacion,
-                "modalidad": "Remoto" if es_remoto else "No especificada",
-                "descripcion": descripcion[:2000],
-                "url": href,
-                "skills_requeridos": [],
-                "requisitos": texto[:2000],
-            })
+    for tarjeta in tarjetas[:20]:
+        titulo_el = tarjeta.select_one(
+            "h2 a span[title], h2 a span, [class*='jobTitle'] span, h2 span"
+        )
+        if not titulo_el:
+            continue
+        titulo = titulo_el.get("title") or titulo_el.get_text(strip=True)
+        if not titulo or len(titulo) < 5:
+            continue
 
-    except Exception as e:
-        print(f"[Indeed] Error: {e}")
+        link_el = tarjeta.select_one("h2 a, a[href*='/rc/clk'], a[href*='/pagepixels']")
+        href = ""
+        if link_el:
+            raw = link_el.get("href", "")
+            href = "https://cl.indeed.com" + raw if raw.startswith("/") else raw
+
+        empresa_el = tarjeta.select_one(
+            "[data-testid='company-name'], [class*='companyName'], span[class*='company']"
+        )
+        empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
+
+        ubicacion_el = tarjeta.select_one(
+            "[data-testid='text-location'], [class*='companyLocation'], div[class*='location']"
+        )
+        ubicacion = ubicacion_el.get_text(strip=True) if ubicacion_el else (ciudad or "Chile")
+
+        desc_el = tarjeta.select_one(
+            "[data-testid='job-snippet'], [class*='snippet'], div[class*='summary']"
+        )
+        texto = tarjeta.get_text(separator=" ", strip=True)
+        descripcion = desc_el.get_text(strip=True) if desc_el else texto[:500]
+        es_remoto = any(w in texto.lower() for w in ["remoto", "remote", "teletrabajo", "híbrido", "hybrid"])
+
+        ofertas.append({
+            "fuente": "Indeed",
+            "titulo": titulo[:100],
+            "empresa": empresa[:80],
+            "ubicacion": ubicacion,
+            "modalidad": "Remoto" if es_remoto else "No especificada",
+            "descripcion": descripcion[:2000],
+            "url": href,
+            "skills_requeridos": [],
+            "requisitos": texto[:2000],
+        })
 
     print(f"[Indeed] {len(ofertas)} ofertas extraídas")
     return ofertas
@@ -296,39 +317,62 @@ def buscar_indeed(cargo: str, ciudad: str = None) -> list[dict]:
 LABORUM_AREAS = {
     "marketing": "marketing-y-publicidad",
     "digital": "marketing-y-publicidad",
+    "publicidad": "marketing-y-publicidad",
     "diseño": "diseno",
+    "design": "diseno",
+    "ux": "diseno",
     "data": "tecnologia-sistemas-y-telecomunicaciones",
     "software": "tecnologia-sistemas-y-telecomunicaciones",
+    "developer": "tecnologia-sistemas-y-telecomunicaciones",
     "ventas": "comercial-ventas-y-negocios",
+    "comercial": "comercial-ventas-y-negocios",
     "rrhh": "recursos-humanos-y-capacitacion",
+    "recursos humanos": "recursos-humanos-y-capacitacion",
     "finanzas": "administracion-contabilidad-y-finanzas",
     "contabilidad": "administracion-contabilidad-y-finanzas",
+    "administracion": "administracion-contabilidad-y-finanzas",
 }
 
 def buscar_laborum(cargo: str, ciudad: str = None) -> list[dict]:
-    if not SCRAPER_API_KEY:
-        print("[Laborum] Sin ScraperAPI key — omitiendo")
-        return []
+    """
+    Laborum.cl — SSR con JSON-LD embebido (schema.org ItemList).
+    Los jobs están en <script type="application/ld+json"> con @type=ItemList.
+    NO requiere ScraperAPI ni JS rendering — es HTML estático desde el servidor.
+    URL: /empleos-area-{area}.html  (NO /area-{area}/empleos.html que da 404)
+    """
+    import json as json_lib
 
     ofertas = []
     cargo_lower = cargo.lower()
     area = next((v for k, v in LABORUM_AREAS.items() if k in cargo_lower), "marketing-y-publicidad")
 
     urls = [
-        f"https://www.laborum.cl/area-{area}/empleos.html",
+        f"https://www.laborum.cl/empleos-area-{area}.html",
         f"https://www.laborum.cl/empleos.html",
     ]
 
     resp = None
     for url in urls:
         try:
-            r = scraper_get(url, timeout=35, render_js=True)
-            print(f"[Laborum] {url} → {r.status_code} | {len(r.text)} chars")
+            # Intento 1: request directo (funciona en Streamlit Cloud)
+            r = requests.get(url, headers=HEADERS, timeout=25, verify=False)
+            print(f"[Laborum] directo {url} → {r.status_code} | {len(r.text)} chars")
             if r.status_code == 200 and len(r.text) > 5000:
                 resp = r
                 break
         except Exception as e:
-            print(f"[Laborum] Error: {e}")
+            print(f"[Laborum] Error directo: {e}")
+
+        if not resp and SCRAPER_API_KEY:
+            try:
+                # Intento 2: ScraperAPI sin render (el JSON-LD está en el HTML estático)
+                r = scraper_get(url, timeout=35, render_js=False)
+                print(f"[Laborum] ScraperAPI {url} → {r.status_code} | {len(r.text)} chars")
+                if r.status_code == 200 and len(r.text) > 5000:
+                    resp = r
+                    break
+            except Exception as e:
+                print(f"[Laborum] Error ScraperAPI: {e}")
 
     if not resp:
         print("[Laborum] Sin respuesta válida")
@@ -336,43 +380,35 @@ def buscar_laborum(cargo: str, ciudad: str = None) -> list[dict]:
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Laborum usa CSS-in-JS; buscamos por estructura semántica
-    tarjetas = soup.select(
-        "article, [class*='jobCard'], [class*='aviso'], [class*='job-card'], "
-        "li[class*='offer'], div[class*='offer-item']"
-    )
-    print(f"[Laborum] {len(tarjetas)} tarjetas encontradas")
-
-    for tarjeta in tarjetas[:20]:
-        titulo_el = tarjeta.select_one("h2, h3, a[href*='/empleo/'], a[href*='/aviso/']")
-        if not titulo_el:
-            continue
-        titulo = titulo_el.get_text(strip=True)
-        if not titulo or len(titulo) < 5:
+    # Parsear JSON-LD (schema.org ItemList) — fuente más estable y no depende de clases CSS
+    items = []
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            data = json_lib.loads(script.string or "")
+            if data.get("@type") == "ItemList":
+                items = data.get("itemListElement", [])
+                break
+        except Exception:
             continue
 
-        link_el = tarjeta.select_one("a[href*='/empleo/'], a[href*='/aviso/'], a[href]")
-        href = ""
-        if link_el:
-            raw = link_el.get("href", "")
-            href = "https://www.laborum.cl" + raw if raw.startswith("/") else raw
+    print(f"[Laborum] {len(items)} items en JSON-LD")
 
-        empresa_el = tarjeta.select_one("[class*='empresa'], [class*='company'], span[class*='name']")
-        empresa = empresa_el.get_text(strip=True) if empresa_el else "Ver en oferta"
-
-        texto = tarjeta.get_text(separator=" ", strip=True)
-        es_remoto = any(w in texto.lower() for w in ["remoto", "teletrabajo"])
+    for item in items[:25]:
+        titulo = item.get("name", "").strip()
+        href   = item.get("url", "").strip()
+        if not titulo or len(titulo) < 5 or not href:
+            continue
 
         ofertas.append({
             "fuente": "Laborum",
             "titulo": titulo[:100],
-            "empresa": empresa[:80],
+            "empresa": "Ver en oferta",
             "ubicacion": ciudad or "Chile",
-            "modalidad": "Remoto" if es_remoto else "No especificada",
-            "descripcion": texto[:2000],
+            "modalidad": "No especificada",
+            "descripcion": titulo,   # sin descripción en JSON-LD; Claude evaluará con título
             "url": href,
             "skills_requeridos": [],
-            "requisitos": texto[:2000],
+            "requisitos": titulo,
         })
 
     print(f"[Laborum] {len(ofertas)} ofertas extraídas")
